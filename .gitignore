@@ -1,0 +1,26 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.class
+
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Project specific state files
+backend/sentinel.db
+backend/mem_state.json
+backend/demo_auth.log
+firewall_remediation_dry_run.sh
+*.log
+*.sqlite
+*.db
+
+# OS specific
+.DS_Store
+Thumbs.db

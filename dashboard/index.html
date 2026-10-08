@@ -1,0 +1,1126 @@
+ - <!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>SENTINEL V3 // SOC COMMAND</title>
+
+<style>
+
+:root{
+
+  --bg:#0b0e14; --panel:#11151f; --panel2:#0d1017; --line:#1d2333;
+
+  --txt:#c9d4e8; --dim:#5d6b85; --faint:#3a4358;
+
+  --red:#ff4655; --amber:#ffb454; --green:#3ddc84; --cyan:#4dd8e6;
+
+  --purple:#a78bfa; --blue:#5b8cff; --gold:#ffd166;
+
+  --mono:'Cascadia Mono','Consolas','SF Mono',monospace;
+
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13px;min-height:100vh}
+
+
+
+/* ---------- header ---------- */
+
+header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0e1220,#0b0e14)}
+
+.logo{font-weight:700;letter-spacing:2px;color:#fff}
+
+.logo b{color:var(--red)}
+
+.chip{font-size:11px;padding:3px 9px;border:1px solid var(--line);border-radius:20px;color:var(--dim)}
+
+.chip.ok{color:var(--green);border-color:#1d3a2a}
+
+.chip.warn{color:var(--amber);border-color:#3a2f1d}
+
+.chip.info{color:var(--cyan);border-color:#173a3f}
+
+.spacer{flex:1}
+
+
+
+/* ---------- controls ---------- */
+
+.controls{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel2);flex-wrap:wrap;align-items:center}
+
+button{font-family:var(--mono);font-size:12px;padding:7px 13px;background:#161b29;color:var(--txt);
+
+  border:1px solid var(--line);border-radius:6px;cursor:pointer;transition:all .15s}
+
+button:hover{border-color:var(--blue);color:#fff;background:#1a2135}
+
+button.danger{border-color:#3a1d22;color:var(--red)}
+
+button.danger:hover{background:#2a1216}
+
+button.primary{background:#14243d;border-color:#24406b;color:var(--blue)}
+
+button:disabled{opacity:.4;cursor:wait}
+
+.ctl-label{color:var(--faint);font-size:11px;margin-right:2px}
+
+
+
+/* ---------- layout grid ---------- */
+
+.grid{display:grid;grid-template-columns:290px 1fr 300px;grid-template-rows:auto 1fr;gap:10px;padding:10px 16px;height:calc(100vh - 100px)}
+
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+
+.panel h2{font-size:11px;letter-spacing:1.5px;color:var(--dim);padding:9px 12px;border-bottom:1px solid var(--line);
+
+  background:var(--panel2);display:flex;align-items:center;gap:8px}
+
+.panel h2 .dot{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+
+.panel h2 .dot.live{background:var(--green);box-shadow:0 0 6px var(--green)}
+
+.panel .body{padding:10px 12px;overflow-y:auto;flex:1}
+
+.panel .body::-webkit-scrollbar{width:6px}
+
+.panel .body::-webkit-scrollbar-thumb{background:#232a3d;border-radius:3px}
+
+
+
+/* KPI row spans */
+
+.kpis{grid-column:1 / -1;display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+
+.kpi .k-label{font-size:10px;color:var(--dim);letter-spacing:1px}
+
+.kpi .k-value{font-size:22px;font-weight:700;color:#fff;margin-top:3px}
+
+.kpi .k-sub{font-size:10px;color:var(--faint);margin-top:2px}
+
+.k-value.red{color:var(--red)} .k-value.green{color:var(--green)}
+
+.k-value.amber{color:var(--amber)} .k-value.cyan{color:var(--cyan)}
+
+.k-value.purple{color:var(--purple)} .k-value.blue{color:var(--blue)}
+
+
+
+/* graph */
+
+#graphPanel{grid-row:2;grid-column:2}
+
+#graphWrap{flex:1;position:relative;background:radial-gradient(ellipse at 50% 40%,#0d1120 0%,#090b12 70%)}
+
+svg{width:100%;height:100%}
+
+.gnode{cursor:pointer}
+
+.gnode rect,.gnode circle,.gnode polygon{stroke-width:1.5}
+
+.node-label{font-family:var(--mono);font-size:10px;fill:var(--dim);pointer-events:none}
+
+.node-label.hl{fill:#fff}
+
+.edge{stroke:#232b40;stroke-width:1.2;fill:none}
+
+.edge.predicted{stroke:var(--purple);stroke-width:2;stroke-dasharray:7 5;animation:dashmove 1.1s linear infinite;filter:drop-shadow(0 0 4px rgba(167,139,250,.6))}
+
+@keyframes dashmove{to{stroke-dashoffset:-12}}
+
+.prob-label{font-family:var(--mono);font-size:10px;fill:var(--purple)}
+
+@keyframes pulse{0%,100%{opacity:.85;r:15}50%{opacity:0;r:26}}
+
+.pulse{animation:pulse 1.6s ease-out infinite;fill:none}
+
+.legend{position:absolute;bottom:8px;left:10px;display:flex;gap:14px;font-size:10px;color:var(--dim)}
+
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+
+
+/* predictor bars */
+
+.pred{margin-bottom:11px}
+
+.pred .p-head{display:flex;justify-content:space-between;align-items:baseline}
+
+.pred .p-name{font-weight:700;color:#fff}
+
+.pred .p-prob{color:var(--purple);font-weight:700}
+
+.pred .p-vec{font-size:10px;color:var(--faint);margin:3px 0 5px}
+
+.p-bar{height:7px;background:#161b29;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+
+.p-fill{height:100%;background:linear-gradient(90deg,#5b4a9e,var(--purple));border-radius:4px;transition:width .5s}
+
+.chip-crown{font-size:9px;color:var(--gold);border:1px solid #4a3b1d;border-radius:3px;padding:1px 5px;margin-left:6px;letter-spacing:1px}
+
+.pred.top .p-name{color:var(--purple)}
+
+
+
+/* alerts feed */
+
+.alert-item{padding:8px 10px;border-left:3px solid var(--faint);background:var(--panel2);border-radius:0 6px 6px 0;margin-bottom:7px}
+
+.alert-item.critical{border-left-color:var(--red)}
+
+.alert-item.high{border-left-color:var(--amber)}
+
+.alert-item.medium{border-left-color:var(--blue)}
+
+.alert-item .a-title{color:#fff;font-size:12px}
+
+.alert-item .a-meta{font-size:10px;color:var(--dim);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
+
+.mitre-tag{color:var(--cyan)}
+
+
+
+/* tables */
+
+table{width:100%;border-collapse:collapse;font-size:11px}
+
+th{color:var(--faint);text-align:left;font-weight:400;padding:4px 6px;border-bottom:1px solid var(--line);font-size:10px;letter-spacing:1px}
+
+td{padding:5px 6px;border-bottom:1px solid #151a26;color:var(--txt)}
+
+.st-NEW{color:var(--red)} .st-TRAPPED{color:var(--green)} .st-ISOLATED{color:var(--amber)}
+
+
+
+/* tokens */
+
+.token-card{background:#1a1420;border:1px solid #3d2540;border-radius:8px;padding:10px;margin-bottom:8px}
+
+.token-card .t-code{font-size:16px;color:var(--purple);font-weight:700;letter-spacing:1px}
+
+.token-card .t-meta{font-size:10px;color:var(--dim);margin:5px 0 8px}
+
+
+
+/* misc rows */
+
+.row2{display:flex;gap:10px;align-items:center;font-size:11px;padding:3px 0;color:var(--dim)}
+
+.row2 b{color:var(--txt)}
+
+.hp-status{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+
+.hp-ports{display:flex;gap:6px}
+
+.port-chip{font-size:10px;border:1px solid var(--line);border-radius:4px;padding:2px 7px;color:var(--cyan)}
+
+.capture{font-size:10px;color:var(--dim);padding:5px 8px;background:var(--panel2);border-radius:5px;margin-bottom:5px;word-break:break-all}
+
+.capture b{color:var(--amber)}
+
+.empty{color:var(--faint);font-size:11px;text-align:center;padding:18px 0}
+
+.stage-chips{display:flex;gap:5px}
+
+.s-chip{width:22px;height:22px;border-radius:5px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--faint)}
+
+.s-chip.done{background:#142a1d;border-color:#1d3a2a;color:var(--green)}
+
+#toast{position:fixed;bottom:18px;right:18px;background:#14243d;border:1px solid #24406b;color:#cfe0ff;
+
+  padding:10px 16px;border-radius:8px;font-size:12px;display:none;z-index:50;max-width:420px}
+
+</style>
+
+</head>
+
+<body>
+
+
+
+<header>
+
+  <div class="logo">SENTINEL <b>V3</b> // SOC COMMAND</div>
+
+  <span class="chip info" id="chipMode"> - </span>
+
+  <span class="chip ok" id="chipDb">DB  - </span>
+
+  <span class="chip" id="chipIntel">intel  - </span>
+
+  <span class="chip" id="chipSync">sync —</span>
+
+  <div class="spacer"></div>
+
+  <span class="chip" id="chipClock">--:--:--</span>
+
+</header>
+
+
+
+<div class="controls" style="display: none;">
+
+  <span class="ctl-label">APT SIMULATION:</span>
+
+  <button onclick="runStage(1)">Stage 1  -  Initial Access</button>
+
+  <button onclick="runStage(2)">Stage 2  -  T1490 Recovery Wipe</button>
+
+  <button onclick="runStage(3)">Stage 3  -  Lateral SMB</button>
+
+  <button onclick="runStage(4)">Stage 4  -  Cred Access</button>
+
+  <button onclick="runStage(5)">Stage 5  -  Impact</button>
+
+  <button class="primary" id="btnSeq" onclick="runSequence()"> -  Run Full Kill Chain</button>
+
+  <button onclick="deployHoneypot()"> -  Deploy Honeypot</button>
+
+  <button class="danger" onclick="resetEpisode()">Reset Episode</button>
+
+</div>
+
+
+
+<div class="grid">
+
+  <!-- KPI ROW -->
+
+  <div class="kpis">
+
+    <div class="kpi"><div class="k-label">THREATS LOGGED</div><div class="k-value red" id="kThreats">0</div><div class="k-sub" id="kThreatsSub"> - </div></div>
+
+    <div class="kpi"><div class="k-label">SIGMA ALERTS</div><div class="k-value amber" id="kAlerts">0</div><div class="k-sub">this episode</div></div>
+
+    <div class="kpi"><div class="k-label">GNN TOP PREDICTION</div><div class="k-value purple" id="kPred"> - </div><div class="k-sub" id="kPredSub">awaiting telemetry</div></div>
+
+    <div class="kpi"><div class="k-label">RL DEFENSE SCORE</div><div class="k-value green" id="kRL">+0.0</div><div class="k-sub" id="kRLSub">PPO-Adaptive-Defender</div></div>
+
+    <div class="kpi"><div class="k-label">HONEYPOT</div><div class="k-value cyan" id="kHP">OFFLINE</div><div class="k-sub" id="kHPSub">real TCP listeners</div></div>
+
+    <div class="kpi"><div class="k-label">KILL-CHAIN PROGRESS</div>
+
+      <div class="stage-chips" style="margin-top:5px">
+
+        <div class="s-chip" id="sc1">1</div><div class="s-chip" id="sc2">2</div><div class="s-chip" id="sc3">3</div>
+
+        <div class="s-chip" id="sc4">4</div><div class="s-chip" id="sc5">5</div>
+
+      </div>
+
+      <div class="k-sub" id="kStageSub">no stages run</div>
+
+    </div>
+
+  </div>
+
+
+
+  <!-- LEFT COLUMN -->
+
+  <div class="panel" style="grid-row:2;grid-column:1">
+
+    <h2><span class="dot live"></span> PATH PREDICTOR  -  GraphSAGE</h2>
+
+    <div class="body" id="predList"><div class="empty">Run stage 2+ to trigger forecast</div></div>
+
+  </div>
+
+
+
+  <!-- CENTER: ATTACK GRAPH -->
+
+  <div class="panel" id="graphPanel">
+
+    <h2><span class="dot live"></span> CYBER KNOWLEDGE GRAPH  -  LIVE
+
+      <span style="margin-left:auto;font-weight:400" id="graphCount"></span></h2>
+
+    <div id="graphWrap">
+
+      <svg id="graph" viewBox="0 0 900 560" preserveAspectRatio="xMidYMid meet"></svg>
+
+      <div class="legend">
+
+        <span><i style="background:#ff4655"></i>COMPROMISED</span>
+
+        <span><i style="background:#ffd166"></i>CROWN JEWEL</span>
+
+        <span><i style="background:#5b8cff"></i>HOST</span>
+
+        <span><i style="background:#4dd8e6"></i>IP/C2</span>
+
+        <span><i style="background:#a78bfa"></i>PREDICTED PATH</span>
+
+        <span><i style="background:#3ddc84"></i>ISOLATED</span>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+
+  <!-- RIGHT COLUMN -->
+
+  <div style="grid-row:2;grid-column:3;display:flex;flex-direction:column;gap:10px;min-height:0">
+
+    <div class="panel" style="flex:1.2">
+
+      <h2><span class="dot live"></span> SIGMA ALERT FEED</h2>
+
+      <div class="body" id="alertList"><div class="empty">No alerts yet  -  run a stage</div></div>
+
+    </div>
+
+    <div class="panel" style="flex:1">
+
+      <h2><span class="dot" id="tokenDot"></span> HITL APPROVAL QUEUE</h2>
+
+      <div class="body" id="tokenList"><div class="empty">No pending Tier-2 tokens</div></div>
+
+    </div>
+
+  </div>
+
+
+
+  <!-- BOTTOM-LEFT: honeypot + threats (under predictor, inside left col via kpis grid is separate; place in left column stack) -->
+
+</div>
+
+
+
+<div id="toast-container"></div>
+
+
+
+<script>
+
+"use strict";
+
+const $ = id => document.getElementById(id);
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+
+
+function toast(msg){
+
+    const c = $("toast-container");
+
+    if (!c) return;
+
+    const t = document.createElement("div");
+
+    t.className = "hud-toast";
+
+    t.innerHTML = `<div class="scanline"></div><div class="toast-icon">[!]</div><div class="toast-content"><div class="title">SYSTEM NOTIFICATION</div><div class="desc">${esc(msg)}</div></div>`;
+
+    c.appendChild(t);
+
+    setTimeout(() => {
+
+      t.style.opacity = "0"; t.style.transform = "translateX(120%)"; t.style.transition = "all 0.4s ease";
+
+      setTimeout(() => t.remove(), 400);
+
+    }, 4500);
+
+  }
+
+  let seenAlerts = new Set();
+
+
+
+async function api(path, body){
+
+  const opt = body ? {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)} : {};
+
+  const r = await fetch(path, opt);
+
+  return r.json();
+
+}
+
+
+
+/* ---------------- controls ---------------- */
+
+async function runStage(stage){
+
+  toast(`Running APT stage ${stage} through detection pipeline - `);
+
+  const r = await api("/api/run_stage", {stage});
+
+  if (r.error) toast(`Stage ${stage}: ${r.error}`);
+
+  else toast(`Stage ${stage}: ${r.events_ingested} events  -  ${r.new_alerts.length} Sigma alerts`);
+
+  await refresh();
+
+}
+
+async function runSequence(){
+
+  const btn = $("btnSeq"); btn.disabled = true;
+
+  for (let s = 1; s <= 5; s++){
+
+    await runStage(s);
+
+    await new Promise(r => setTimeout(r, 700));
+
+  }
+
+  btn.disabled = false;
+
+}
+
+async function deployHoneypot(){
+
+  const r = await api("/api/honeypot", {});
+
+  toast(r.status === "RUNNING" ? `Honeypot LIVE on ports ${Object.values(r.ports||{}).join(", ")}` : JSON.stringify(r));
+
+  await refresh();
+
+}
+
+async function resetEpisode(){
+
+  await api("/api/reset", {});
+
+  toast("Episode reset  -  audit trail & RL score preserved");
+
+  await refresh();
+
+}
+
+async function approveToken(token){
+
+  const r = await api("/api/approve", {token, analyst: "DASHBOARD_ANALYST"});
+
+  if (r.status === "APPROVED_AND_ISOLATED")
+
+    toast(` -  ${r.target} ISOLATED  -  RL ${r.rl?.reward_delta >= 0 ? "+" : ""}${r.rl?.reward_delta ?? 0} PTS`);
+
+  else toast(`Approval failed: ${r.message || r.error || "unknown"}`);
+
+  await refresh();
+
+}
+
+
+
+/* ---------------- attack graph ---------------- */
+
+const NODE_COLORS = {
+
+  Host:      {fill:"#1a2b4a", stroke:"#5b8cff"},
+
+  IPAddress: {fill:"#0e2b30", stroke:"#4dd8e6"},
+
+  Process:   {fill:"#241a33", stroke:"#a78bfa"},
+
+  User:      {fill:"#1f2416", stroke:"#9ccc65"},
+
+  File:      {fill:"#2b2113", stroke:"#ffb454"},
+
+};
+
+const W = 900, H = 560;
+
+
+
+function layoutGraph(elements){
+
+  // simple force-directed sim (deterministic-ish start)  -  organic real look
+
+    window._nodePos = window._nodePos || {};
+
+  const nodes = elements.filter(e => !e.data.source).map(e => {
+
+    const prev = window._nodePos[e.data.id] || {x: W/2 + (Math.random()-0.5)*300, y: H/2 + (Math.random()-0.5)*220};
+
+    return {...e.data, x: prev.x, y: prev.y, vx:0, vy:0};
+
+  });
+
+  const idx = Object.fromEntries(nodes.map((n,i)=>[n.id,i]));
+
+  const edges = elements.filter(e => e.data.source && idx[e.data.source] !== undefined && idx[e.data.target] !== undefined)
+
+                        .map(e => ({s: idx[e.data.source], t: idx[e.data.target], ...e.data}));
+
+  for (let it = 0; it < 160; it++){
+
+    // repulsion
+
+    for (let i = 0; i < nodes.length; i++) for (let j = i+1; j < nodes.length; j++){
+
+      const a = nodes[i], b = nodes[j];
+
+      let dx = a.x-b.x, dy = a.y-b.y, d2 = dx*dx + dy*dy + 40;
+
+      const f = 2600 / d2;
+
+      a.vx += dx/d2*f*40; a.vy += dy/d2*f*40;
+
+      b.vx -= dx/d2*f*40; b.vy -= dy/d2*f*40;
+
+    }
+
+    // springs
+
+    for (const e of edges){
+
+      const a = nodes[e.s], b = nodes[e.t];
+
+      const dx = b.x-a.x, dy = b.y-a.y, d = Math.sqrt(dx*dx+dy*dy) || 1;
+
+      const f = (d - 130) * 0.012;
+
+      a.vx += dx/d*f; a.vy += dy/d*f;
+
+      b.vx -= dx/d*f; b.vy -= dy/d*f;
+
+    }
+
+    // gravity + integrate
+
+    for (const n of nodes){
+
+      n.vx += (W/2 - n.x) * 0.0035; n.vy += (H/2 - n.y) * 0.0035;
+
+      n.vx *= 0.86; n.vy *= 0.86;
+
+      n.x = Math.max(50, Math.min(W-50, n.x + n.vx));
+
+      n.y = Math.max(35, Math.min(H-35, n.y + n.vy));
+
+        window._nodePos[n.id] = {x: n.x, y: n.y};
+
+    }
+
+  }
+
+  return {nodes, edges};
+
+}
+
+
+
+function renderGraph(elements){
+
+  const svg = $("graph");
+
+  const {nodes, edges} = layoutGraph(elements);
+
+  const pos = Object.fromEntries(nodes.map(n => [n.id, n]));
+
+  let out = "";
+
+  // edges first
+
+  for (const e of edges){
+
+    const a = pos[e.source], b = pos[e.target];
+
+    if (!a || !b) continue;
+
+    if (e.type === "PREDICTED_ATTACK_PATH"){
+
+      const mx = (a.x+b.x)/2, my = (a.y+b.y)/2;
+
+      out += `<line class="edge predicted" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+
+      out += `<text class="prob-label" x="${mx}" y="${my-6}" text-anchor="middle">${Math.round((e.probability||0)*100)}%</text>`;
+
+    } else {
+
+      out += `<line class="edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+
+    }
+
+  }
+
+  // nodes
+
+  for (const n of nodes){
+
+    const col = NODE_COLORS[n.type] || {fill:"#1a1f2e", stroke:"#5d6b85"};
+
+    const status = n.status || "HEALTHY";
+
+    const compromised = status === "COMPROMISED";
+
+    const isolated = status === "ISOLATED";
+
+    const crown = n.criticality === "HIGH";
+
+    const stroke = isolated ? "#3ddc84" : compromised ? "#ff4655" : col.stroke;
+
+    const isHost = n.type === "Host";
+
+    if (compromised)
+
+      out += `<circle class="pulse" cx="${n.x}" cy="${n.y}" r="15" stroke="#ff4655" stroke-width="2"/>`;
+
+    if (isHost){
+
+      const w2 = Math.max(52, (n.label||"").length*7 + 16);
+
+      out += `<g class="gnode" onclick="nodeClick('${esc(n.id)}')">
+
+        <rect x="${n.x-w2/2}" y="${n.y-15}" width="${w2}" height="30" rx="7"
+
+          fill="${compromised ? "#2a1216" : col.fill}" stroke="${stroke}"/>
+
+        ${crown ? `<rect x="${n.x-w2/2-3}" y="${n.y-18}" width="${w2+6}" height="36" rx="9" fill="none" stroke="#ffd166" stroke-width="1" stroke-dasharray="3 3"/>` : ""}
+
+        <text class="node-label ${compromised?"hl":""}" x="${n.x}" y="${n.y+4}" text-anchor="middle">${esc(n.name || n.label || n.id.split(":").pop())}</text></g>`;
+
+    } else {
+
+      const r = n.type === "IPAddress" ? 9 : 6;
+
+      out += `<g class="gnode" onclick="nodeClick('${esc(n.id)}')">
+
+        ${n.type === "Process"
+
+          ? `<polygon points="${n.x},${n.y-r-3} ${n.x+r+3},${n.y} ${n.x},${n.y+r+3} ${n.x-r-3},${n.y}" fill="${col.fill}" stroke="${stroke}"/>`
+
+          : `<circle cx="${n.x}" cy="${n.y}" r="${r}" fill="${col.fill}" stroke="${stroke}"/>`}
+
+        <text class="node-label" x="${n.x}" y="${n.y+r+12}" text-anchor="middle">${esc((n.name || n.label || "").slice(0,18))}</text></g>`;
+
+    }
+
+  }
+
+  svg.innerHTML = `<g id="zoomLayer" transform="translate(${gTransform.x},${gTransform.y}) scale(${gTransform.k})">${out}</g>`;
+
+  $("graphCount").textContent = `${nodes.length} nodes  -  ${edges.length} edges`;
+
+}
+
+
+
+
+
+let gTransform = {x: 0, y: 0, k: 1};
+
+let isDragging = false;
+
+let startPos = {x: 0, y: 0};
+
+
+
+setTimeout(() => {
+
+  const svg = $("graph");
+
+  if (!svg) return;
+
+  svg.addEventListener("wheel", (e) => {
+
+      e.preventDefault();
+
+      const scaleAdj = e.deltaY > 0 ? 0.9 : 1.1;
+
+      const rect = svg.getBoundingClientRect();
+
+      const mouseX = e.clientX - rect.left;
+
+      const mouseY = e.clientY - rect.top;
+
+      gTransform.x = mouseX - (mouseX - gTransform.x) * scaleAdj;
+
+      gTransform.y = mouseY - (mouseY - gTransform.y) * scaleAdj;
+
+      gTransform.k *= scaleAdj;
+
+      const layer = $("zoomLayer");
+
+      if(layer) layer.setAttribute("transform", `translate(${gTransform.x},${gTransform.y}) scale(${gTransform.k})`);
+
+  }, {passive: false});
+
+
+
+  svg.addEventListener("mousedown", (e) => {
+
+      isDragging = true;
+
+      startPos = {x: e.clientX - gTransform.x, y: e.clientY - gTransform.y};
+
+      svg.style.cursor = "grabbing";
+
+  });
+
+  window.addEventListener("mousemove", (e) => {
+
+      if (!isDragging) return;
+
+      gTransform.x = e.clientX - startPos.x;
+
+      gTransform.y = e.clientY - startPos.y;
+
+      const layer = $("zoomLayer");
+
+      if(layer) layer.setAttribute("transform", `translate(${gTransform.x},${gTransform.y}) scale(${gTransform.k})`);
+
+  });
+
+  window.addEventListener("mouseup", () => {
+
+      isDragging = false;
+
+      if (svg) svg.style.cursor = "default";
+
+  });
+
+}, 1000);
+
+
+
+function nodeClick(id){ toast(`Node: ${id}  -  details in terminal CLI for now`); }
+
+
+
+/* ---------------- panels ---------------- */
+
+function renderPredictions(preds){
+
+  const el = $("predList");
+
+  if (!preds || !preds.length){ el.innerHTML = `<div class="empty">Run stage 2+ to trigger forecast</div>`; return; }
+
+  el.innerHTML = preds.slice(0, 7).map((p, i) => `
+
+    <div class="pred ${i===0 ? "top" : ""}">
+
+      <div class="p-head">
+
+        <span class="p-name">${esc(p.target_name)}${p.is_critical ? '<span class="chip-crown">CROWN JEWEL</span>' : ""}</span>
+
+        <span class="p-prob">${(p.probability*100).toFixed(1)}%</span>
+
+      </div>
+
+      <div class="p-vec">${esc(p.attack_vector)}  -  ${esc(p.target || p.target_name)}</div>
+
+      <div class="p-bar"><div class="p-fill" style="width:${Math.round(p.probability*100)}%"></div></div>
+
+    </div>`).join("");
+
+  const top = preds[0];
+
+  $("kPred").textContent = top.target_name;
+
+  $("kPred").className = `k-value purple`;
+
+  $("kPredSub").textContent = `${(top.probability*100).toFixed(1)}%  -  ${top.attack_vector}`;
+
+}
+
+
+
+function renderAlerts(alerts){
+
+    const el = $("alertList");
+
+    if (!alerts.length){ el.innerHTML = `<div class="empty">No alerts yet - run a stage</div>`; return; }
+
+    alerts.forEach(a => {
+
+      const aid = a.timestamp + a.rule_id;
+
+      if (!seenAlerts.has(aid)) {
+
+        seenAlerts.add(aid);
+
+        toast(`[SIGMA DETECTED] ${a.rule_id} on ${a.host}`);
+
+      }
+
+    });
+
+    alerts.forEach(a => {
+
+      const aid = a.timestamp + a.rule_id;
+
+      if (!seenAlerts.has(aid)) {
+
+        seenAlerts.add(aid);
+
+        toast(`[SIGMA DETECTED] ${a.rule_id} on ${a.host}`);
+
+      }
+
+    });
+
+  el.innerHTML = alerts.map(a => `
+
+    <div class="alert-item ${(a.level||"").toLowerCase()}">
+
+      <div class="a-title">${esc(a.title || a.rule_id)}</div>
+
+      <div class="a-meta">
+
+        <span class="mitre-tag">${esc((a.mitre||[]).join(" "))}</span>
+
+        <span>${esc(a.host || "")}</span>
+
+        <span>${esc((a.timestamp||"").slice(11,19))} UTC</span>
+
+      </div>
+
+    </div>`).join("");
+
+}
+
+
+
+function renderTokens(tokens){
+
+  const el = $("tokenList");
+
+  $("tokenDot").className = tokens.length ? "dot live" : "dot";
+
+  if (!tokens.length){ el.innerHTML = `<div class="empty">No pending Tier-2 tokens</div>`; return; }
+
+  el.innerHTML = tokens.map(t => `
+
+    <div class="token-card">
+
+      <div class="t-code">${esc(t.token)}</div>
+
+      <div class="t-meta">isolate <b style="color:#fff">${esc(t.host_id)}</b>  -  protect ${esc(t.predicted_target || " - ")}<br>${esc(t.reason || "")}</div>
+
+      <button class="danger" onclick="approveToken('${esc(t.token)}')"> -  APPROVE ISOLATION</button>
+
+    </div>`).join("");
+
+}
+
+
+
+function renderThreats(threats){
+
+  if (!threats.length) return `<div class="empty">Threat table empty</div>`;
+
+  return `<table><tr><th>TIME</th><th>TYPE</th><th>IP</th><th>ST</th></tr>` +
+
+    threats.slice(0, 8).map(t => `
+
+      <tr><td>${esc((t.timestamp||"").slice(11,19))}</td>
+
+      <td>${esc((t.type||"").replace("SIGMA:",""))}</td>
+
+      <td>${esc(t.ip)}</td>
+
+      <td class="st-${esc(t.status)}">${esc(t.status)}</td></tr>`).join("") + `</table>`;
+
+}
+
+
+
+function renderHoneypot(hp, captures){
+  // hp.state comes from an OS-level TCP probe (Fix 1), so this panel is truthful
+  // even though the MCP process -- not the dashboard -- owns the listeners.
+  const st = hp.state || (hp.running ? "ONLINE" : "OFFLINE");
+  const up = hp.running === true;
+  const label = st === "DEGRADED" ? "PARTIAL" : (up ? "LIVE" : "OFFLINE");
+  $("kHP").textContent = label;
+  $("kHP").className = up ? "k-value cyan" : "k-value";
+  const lp = (hp.listening_ports || []).map(p => `:${p}`).join(" ");
+  $("kHPSub").textContent = up
+    ? `${lp || "listening"} · ${hp.total_captures} captures`
+    : "not deployed";
+  const ports = Object.values(hp.ports || {}).map(p => `<span class="port-chip">:${p}</span>`).join("");
+  const caps = (captures || []).slice(0, 6).map(c => {
+    let pretty = c.payload;
+    try { const j = JSON.parse(c.payload); pretty = j.event === "ssh_auth_attempt"
+        ? `SSH <b>${esc(j.username)} / ${esc(j.password)}</b> from ${esc(c.source_ip)}`
+        : `HTTP <b>${esc(j.request_line)}</b> from ${esc(c.source_ip)}`; } catch(e){}
+    return `<div class="capture">${esc((c.timestamp||"").slice(11,19))} ${pretty}</div>`;
+  }).join("");
+  const owner = hp.owned_by_this_process === false && up
+    ? `<div class="empty" style="color:var(--cyan)">listeners owned by another process (probe-verified)</div>` : "";
+  return `
+    <div class="hp-status">
+      <span style="color:${up ? "var(--green)" : "var(--faint)"}">●</span>
+      <b>${up ? "TRAPS ACTIVE" : "STANDBY"}</b>
+      <span class="hp-ports">${ports}</span>
+    </div>
+    ${owner}${caps || `<div class="empty">No captures yet — real attackers land here</div>`}`;
+}
+
+
+/* ---------------- state refresh ---------------- */
+
+let lastState = null;
+
+async function refresh(){
+
+  try {
+
+    const s = await api("/api/state");
+
+    lastState = s;
+
+    $("chipMode").textContent = s.mode;
+
+    $("chipIntel").textContent = `intel ${s.intel_mode}`;
+
+    $("kThreats").textContent = s.threats_count;
+
+    $("kThreatsSub").textContent = `audit entries: ${s.audit_count}`;
+
+    $("kAlerts").textContent = s.alerts.length;
+
+    $("kRL").textContent = `${s.rl.cumulative_reward >= 0 ? "+" : ""}${(+s.rl.cumulative_reward).toFixed(1)}`;
+
+    $("kRLSub").textContent = s.rl.standing || "";
+
+    // Fix 4: stage_history arrives via the mem_ipc bridge (the MCP engine is the
+    // writer). It used to always be empty in this process, so this widget read
+    // "no stages run" for an incident that had executed all five stages.
+    const stages = [...new Set((s.stage_history || []).map(Number).filter(n => n >= 1 && n <= 5))].sort((a,b) => a-b);
+
+    for (let i = 1; i <= 5; i++) $("sc"+i).className = "s-chip" + (stages.includes(i) ? " done" : "");
+
+    $("kStageSub").textContent = stages.length
+      ? `${stages.length}/5 stages \u00b7 ${stages.join(", ")}${s.latest_stage === 5 ? " \u00b7 IMPACT" : ""}`
+      : "no stages run";
+
+    const sy = $("chipSync");
+    if (sy && s.sync) {
+      const on = !!s.sync.applied;
+      if (!on) {
+        sy.textContent = "bridge offline \u00b7 local state";
+        sy.className = "chip warn";
+      } else if (s.sync.frozen) {
+        // Writer process exited: this is the last known incident state, not a
+        // live feed. Say so instead of passing it off as freshly synced.
+        sy.textContent = `last-known \u00b7 writer exited \u00b7 ${s.sync.age_s ?? "?"}s ago`;
+        sy.className = "chip warn";
+      } else {
+        sy.textContent = `synced \u00b7 mem_ipc \u00b7 ${s.sync.age_s ?? "?"}s`;
+        sy.className = "chip ok";
+      }
+    }
+
+    renderGraph(s.graph.elements || []);
+
+    renderPredictions(s.predictions);
+
+    renderAlerts(s.alerts);
+
+    renderTokens(s.pending_tokens);
+
+    // left column bottom: reuse predictor panel body end for honeypot? No  -  dedicated rows:
+
+    document.querySelector("#predList").parentElement === null; // noop
+
+    // Fill honeypot + threats into the right of KPI: use dedicated containers injected under grid
+
+    let hpPanel = $("hpBody");
+
+    hpPanel.innerHTML = renderHoneypot(s.honeypot, s.captures);
+
+    let thPanel = $("threatBody");
+
+    thPanel.innerHTML = renderThreats(s.threats);
+
+  } catch(e){
+
+    $("chipMode").textContent = "ENGINE OFFLINE";
+
+  }
+
+}
+
+
+
+/* add two bottom panels (honeypot + threats) without disturbing grid:
+
+   inject a second grid row */
+
+(function(){
+
+  const grid = document.querySelector(".grid");
+
+  const wrap = document.createElement("div");
+
+  wrap.style.cssText = "grid-column:1 / -1;display:grid;grid-template-columns:290px 1fr 300px;gap:10px";
+
+  wrap.innerHTML = `
+
+    <div class="panel"><h2><span class="dot live"></span> THREAT TABLE  -  sentinel.db</h2>
+
+      <div class="body" id="threatBody"></div></div>
+
+    <div class="panel"><h2><span class="dot" id="hpDot"></span> HONEYPOT FORENSICS  -  REAL CAPTURES</h2>
+
+      <div class="body" id="hpBody"></div></div>
+
+    <div class="panel"><h2><span class="dot"></span> SOAR AUDIT TAIL</h2>
+
+      <div class="body" id="auditBody"><div class="empty">empty</div></div></div>`;
+
+  grid.appendChild(wrap);
+
+})();
+
+
+
+async function refreshAudit(){
+
+  // small helper: audit tail rendered from last state
+
+  if (!lastState) return;
+
+  const rows = (lastState.audit_tail || []).map(a => `
+
+    <div class="row2"><b>${esc(a.action || a.id)}</b> <span>${esc(a.target || "")}</span>
+
+    <span style="margin-left:auto;color:var(--faint)">${esc((a.timestamp||"").slice(11,19))}</span></div>`).join("");
+
+  $("auditBody").innerHTML = rows || `<div class="empty">empty</div>`;
+
+}
+
+
+
+setInterval(async () => { await refresh(); await refreshAudit(); }, 2500);
+
+refresh().then(refreshAudit);
+
+
+
+setInterval(() => { $("chipClock").textContent = new Date().toISOString().slice(11,19) + " UTC"; }, 1000);
+
+</script>
+
+</body>
+
+</html>
+
+
+
+
+

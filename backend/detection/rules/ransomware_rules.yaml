@@ -1,0 +1,65 @@
+rules:
+  - id: sigma_t1490_vssadmin_delete
+    title: Shadow Copies Deletion via VSSAdmin
+    description: Detects deletion of volume shadow copies using vssadmin or wbadmin to inhibit system recovery during ransomware execution.
+    status: production
+    level: critical
+    mitre_attack:
+      - T1490
+    mitre_tactic: Inhibit System Recovery
+    detection:
+      selection:
+        event_type: PROCESS_CREATION
+        command_line|contains:
+          - "vssadmin delete shadows"
+          - "vssadmin.exe delete shadows"
+          - "wbadmin delete catalog"
+          - "wmic shadowcopy delete"
+
+  - id: sigma_t1059_suspicious_powershell_parent
+    title: Suspicious PowerShell Execution from Office Application
+    description: Detects an Office application (Word, Excel, PDF viewer) spawning PowerShell, indicative of spearphishing macro execution.
+    status: production
+    level: high
+    mitre_attack:
+      - T1059.001
+    mitre_tactic: "Command and Scripting Interpreter: PowerShell"
+    detection:
+      selection:
+        event_type: PROCESS_CREATION
+        parent_name|in:
+          - "winword.exe"
+          - "excel.exe"
+          - "acrobat.exe"
+          - "invoice.pdf.exe"
+          - "reader.exe"
+        process_name|in:
+          - "powershell.exe"
+          - "cmd.exe"
+          - "wscript.exe"
+
+  - id: sigma_t1003_lsass_dump
+    title: Credential Dumping via LSASS Memory Access
+    description: Detects unauthorized processes accessing LSASS process memory with query/read access rights to extract plaintext credentials or hashes.
+    status: production
+    level: critical
+    mitre_attack:
+      - T1003.001
+    mitre_tactic: "OS Credential Dumping: LSASS Memory"
+    detection:
+      selection:
+        event_type: PROCESS_ACCESS
+        target_name|contains: "lsass.exe"
+
+  - id: sigma_t1021_lateral_smb_scan
+    title: Lateral Movement SMB Port 445 Discovery
+    description: Detects outbound internal network connections over SMB port 445, indicative of internal reconnaissance or lateral worm spreading.
+    status: production
+    level: high
+    mitre_attack:
+      - T1021.002
+    mitre_tactic: "Remote Services: SMB/Windows Admin Shares"
+    detection:
+      selection:
+        event_type: NETWORK_CONNECTION
+        dest_port: 445

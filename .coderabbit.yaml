@@ -1,0 +1,10 @@
+﻿language: "en-US"
+reviews:
+  profile: "assertive"  # Set to assertive to get detailed, strict security feedback
+  request_changes_workflow: false
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+chat:
+  auto_reply: true

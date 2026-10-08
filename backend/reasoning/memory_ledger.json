@@ -1,0 +1,39 @@
+{
+  "system": "Hermes-SOC-Lead-Persistent-Memory",
+  "version": "1.0",
+  "last_synced": "2026-09-09T06:00:00Z",
+  "learned_false_positives": [
+    {
+      "pattern": "veeam_backup_agent.exe",
+      "host": "BACKUP-VAULT-01",
+      "reason": "Legitimate enterprise scheduled night backup job (Whitelisted by Lead Analyst)."
+    },
+    {
+      "pattern": "legit_admin_script.exe",
+      "host": "*",
+      "reason": "Whitelisted admin script"
+    },
+    {
+      "pattern": "backup_daemon.exe",
+      "host": "BACKUP-VAULT-01",
+      "reason": "Verified legitimate scheduled backup",
+      "learned_at": "2026-09-09T07:00:00.000000+00:00"
+    }
+  ],
+  "threat_signatures": [
+    {
+      "indicator": "vssadmin delete shadows",
+      "classification": "CONFIRMED_MALICIOUS_RANSOMWARE",
+      "times_seen": 14,
+      "recommended_action": "IMMEDIATE_HOST_ISOLATION"
+    }
+  ],
+  "analyst_decisions_log": [
+    {
+      "incident_id": "INC-TEST",
+      "timestamp": "2026-09-09T06:13:33.326397+00:00",
+      "analyst_override": true,
+      "notes": "Whitelisted admin script"
+    }
+  ]
+}
