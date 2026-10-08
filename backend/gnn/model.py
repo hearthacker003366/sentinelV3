@@ -1,4 +1,10 @@
 """
+GraphSAGE advanced model implementation.
+Note: This file contains the true GraphSAGELayer PyTorch implementation.
+The operational wrapper for the unified backend is located in predictor.py,
+which uses a simplified GNNModel or NumPy fallback depending on the runtime environment.
+"""
+"""
 Sentinel GraphSAGE & Physics-Informed GNN Model
 Implements inductive neighborhood aggregation for graph node representations
 and link prediction to forecast the attacker's next lateral hop.

@@ -18,9 +18,9 @@ Instead of purely static SIEM alerts, Sentinel V3 builds an in-memory **Cyber Kn
 > **Disclaimer:** This is a portfolio/learning artifact and a proof of concept. It is not a production-grade security appliance.
 
 ## ✨ Key Features
-- **🧠 Graph Predictive Engine:** In-memory NetworkX graphing that uses heuristics and lightweight PyTorch neighbors to predict attacker lateral movement.
+- **🧠 Graph Predictive Engine:** In-memory NetworkX graphing that uses heuristics and lightweight PyTorch neighbors (with a native NumPy fallback) to predict attacker lateral movement.
 - **🤖 Autonomous SOAR Agent:** AI-driven incident triage that evaluates threats and generates remediation rule drafts (dry-run iptables).
-- **📱 Telegram HITL Integration:** A demo 2-way Telegram gateway that simulates cryptographic `AUTH_TOKEN` approvals before containment.
+- **📱 Telegram HITL Integration:** A demo 2-way Telegram gateway that simulates cryptographic `AUTH_TOKEN` approvals before containment (Note: The notifier is deliberately muted in this demo branch to prevent active messaging).
 - **🍯 Dynamic Honeypot Deployment:** Deploys active deceptive assets (e.g., fake SSH/FTP servers) to trap attackers locally.
 - **📊 Real-Time SOC Dashboard:** A pure Python/HTML/JS unified dashboard broadcasting live telemetry on port 8515.
 
@@ -48,10 +48,10 @@ cd sentinelV3
 
 # 2. Configure Environment
 cp .env.example .env
-# Edit .env with your Telegram bot token if you want to test the notifier
 
 # 3. Install dependencies
 pip install -r requirements.txt
+pip install -r requirements-dev.txt  # If you want to run the test suite
 
 # 4. Boot the Unified Dashboard & Watcher Daemon
 python3 sentinelctl.py start
@@ -63,7 +63,7 @@ python3 sentinelctl.py start
 - `dashboard/` - Zero-dependency HTML/JS/CSS frontend and polling server.
 - `mcp_server/` - Model Context Protocol (MCP) server for native AI Agent tool execution.
 - `demo_tools/` - APT simulation scripts.
-- `docs/` - Architectural research and project notes.
+- `docs/architecture/` - Architectural research and project notes.
 
 ## 🤝 Contributing
 Contributions, issues, and feature requests are welcome! 
