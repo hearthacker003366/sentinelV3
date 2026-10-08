@@ -1,4 +1,4 @@
-﻿import time
+import time`nimport os
 import os
 import random
 import threading
@@ -6,7 +6,7 @@ import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(BASE_DIR, "backend", "demo_auth.log")
-ATTACKER_IP = "192.168.1.51"
+ATTACKER_IP = os.getenv("ATTACKER_IP", "192.168.1.51")  # [DEMO ONLY] Simulated IP
 
 noise_running = False
 

@@ -20,7 +20,7 @@ Stage model (mirrors the documented V1 scenario):
 
 from typing import Dict, Any, List
 
-C2_IP = "185.220.101.49"
+C2_IP = os.getenv("C2_IP", "185.220.101.49")  # [DEMO ONLY] Simulated C2 Server IP
 WKSTN04_IP = "192.168.1.50"
 
 # Internal enterprise topology (deterministic lab addressing)
