@@ -1,3 +1,4 @@
+import os
 """
 Sentinel Ransomware / APT Simulator (V3)
 ========================================
