@@ -276,6 +276,18 @@ class TestSentinelPlatform(unittest.TestCase):
             self.sim.generate_stage("two")
 
 
+    def test_16_master_attacker_syntax_and_paths(self):
+        """master_attacker.py must compile cleanly and resolve to backend/demo_auth.log."""
+        import py_compile
+        attacker_path = os.path.join(BASE_DIR, "demo_tools", "master_attacker.py")
+        self.assertTrue(os.path.exists(attacker_path), "master_attacker.py must exist")
+        py_compile.compile(attacker_path, doraise=True)
+        with open(attacker_path, "r", encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn("`n", src, "No powershell backtick-n escape artifact allowed")
+        self.assertIn('"backend"', src)
+        self.assertIn('"demo_auth.log"', src)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
