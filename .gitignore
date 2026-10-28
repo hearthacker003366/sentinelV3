@@ -30,3 +30,8 @@ backend/reasoning/hermes_queue.json
 Incident_Report_*.html
 remediation_patch_*.txt
 
+
+backend/reasoning/memory_ledger.json
+backend/reasoning/memory_ledger.json.bak.*
+var/
+

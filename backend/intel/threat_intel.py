@@ -102,11 +102,15 @@ class ThreatIntelService:
     # ------------------------------------------------------------------
     def check_ip(self, ip: str) -> Dict[str, Any]:
         """Main entry: returns a fully-labeled verdict dict."""
-        if not ip or not isinstance(ip, str):
+        import ipaddress
+        # Security (§2.8): Validate strictly as IPv4 or IPv6 before cache lookup or external query
+        try:
+            clean_ip = str(ipaddress.ip_address(str(ip).strip()))
+        except (ValueError, TypeError, AttributeError):
             return self._verdict(ip or "?", mode="OFFLINE-HEURISTIC", confidence=0,
-                                 recommendation="MONITOR", detail="Invalid IP input", source="validator")
+                                 recommendation="MONITOR", detail="Invalid IP address format", source="validator")
 
-        cached = self._cache_get(ip)
+        cached = self._cache_get(clean_ip)
         if cached is not None:
             return cached
 
@@ -140,6 +144,9 @@ class ThreatIntelService:
     def _cache_put(self, ip: str, verdict: Dict[str, Any], mode: str):
         try:
             with sqlite3.connect(self.db_path) as conn:
+                # Security (§2.16): Prune cache entries older than 7 days on insert
+                cutoff = time.time() - (7 * 86400)
+                conn.execute("DELETE FROM intel_cache WHERE fetched_at < ?", (cutoff,))
                 conn.execute(
                     "INSERT OR REPLACE INTO intel_cache (ip, verdict_json, fetched_at, mode) VALUES (?,?,?,?)",
                     (ip, json.dumps(verdict), time.time(), mode),

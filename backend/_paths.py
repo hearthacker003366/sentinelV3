@@ -16,7 +16,11 @@ SENTINEL_HOME = _compute_home()
 BASE_DIR = SENTINEL_HOME
 
 def ensure_home_guard() -> str:
-    """Validate the resolved home. Legacy guard function, now a no-op."""
+    """Validate that SENTINEL_HOME is a valid project root containing required modules (§2.10)."""
+    if not os.path.isdir(SENTINEL_HOME):
+        raise RuntimeError(f"Invalid SENTINEL_HOME: directory does not exist ({SENTINEL_HOME})")
+    if not os.path.isdir(os.path.join(SENTINEL_HOME, "backend")):
+        raise RuntimeError(f"Corrupt Sentinel directory: 'backend' not found in {SENTINEL_HOME}")
     return SENTINEL_HOME
 
 # ---------------------------------------------------------------------------
@@ -42,6 +46,18 @@ def mcp_server_entry() -> str:
 
 def cli_entry() -> str:
     return os.path.join(SENTINEL_HOME, "sentinel_cli.py")
+
+def get_db_connection(path: str | None = None):
+    """Return a hardened SQLite connection with WAL journal mode and busy timeout (§2.14)."""
+    import sqlite3
+    p = path or db_path()
+    conn = sqlite3.connect(p, timeout=10.0)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except sqlite3.Error:
+        pass
+    return conn
 
 if __name__ == "__main__":
     print(f"SENTINEL_HOME = {ensure_home_guard()}")

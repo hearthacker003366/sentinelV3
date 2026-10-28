@@ -234,6 +234,10 @@ class SentinelUnifiedServer:
              "inputSchema": schema({"message": {"type": "string"}}, ["message"])},
             {"name": "reset_episode", "description": "Clear graph/alerts/episode state (keeps audit trail and RL score).",
              "inputSchema": schema({})},
+            {"name": "send_mobile_alert", "description": "Dispatch out-of-band mobile security notification via Telegram gateway.",
+             "inputSchema": schema({"message": {"type": "string"}}, ["message"])},
+            {"name": "unquarantine_host", "description": "Tier-2 SOAR: Restore network connectivity to an isolated host after remediation.",
+             "inputSchema": schema({"host_id": {"type": "string"}, "analyst": {"type": "string"}}, ["host_id"])},
         ]
 
     # ================================================================= #
@@ -257,10 +261,13 @@ class SentinelUnifiedServer:
             "hermes_investigate": self.t_hermes_investigate,
             "hermes_chat": self.t_hermes_chat,
             "reset_episode": self.t_reset_episode,
+            "send_mobile_alert": self.t_send_mobile_alert,
+            "unquarantine_host": self.t_unquarantine_host,
         }.get(name)
         if handler is None:
             return {"error": f"Unknown tool: {name}", "mode": "ERROR"}
-        result = handler(args)
+        with getattr(self, "_state_lock", threading.Lock()):
+            result = handler(args)
         # Publish this engine's authoritative in-memory state to the dashboard
         # via the mem_ipc bridge. The dashboard runs its OWN engine instance, so
         # without this it shows a divergent incident view (RL +0.0, no alerts,
@@ -355,7 +362,8 @@ class SentinelUnifiedServer:
                 ok = r.status == 200
             return {"mode": "REAL" if ok else "ERROR", "delivered": ok}
         except Exception as e:
-            return {"mode": "ERROR", "error": str(e), "alert_text": message}
+            # Security (§2.10): Never return raw exception string containing credential URLs
+            return {"mode": "ERROR", "error": "Telegram gateway dispatch failed (check connectivity / credentials)", "alert_text": message}
 
     # ---------------- Generation A tools (APT brain) ---------------- #
     def t_simulate_apt_scenario(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -518,7 +526,7 @@ class SentinelUnifiedServer:
         # Clear persistent DB
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("DELETE FROM threats")
-            conn.execute("DELETE FROM soar_audit_v3")
+            # Security (§2.4): Do NOT delete the SOAR audit trail on reset
             conn.execute("DELETE FROM honeypot_captures")
             conn.commit()
 

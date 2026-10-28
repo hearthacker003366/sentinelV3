@@ -127,8 +127,16 @@ class HermesSOCLead:
             try:
                 with open(self.memory_file, "r", encoding="utf-8") as f:
                     return json.load(f)
-            except Exception:
-                pass
+            except Exception as e:
+                # Security (§2.17): Quarantine corrupt memory file instead of silently overwriting
+                try:
+                    import shutil, time
+                    ts = int(time.time())
+                    bak_path = f"{self.memory_file}.bak.{ts}"
+                    shutil.copyfile(self.memory_file, bak_path)
+                    print(f"[HermesSOCLead] WARNING: Corrupt memory ledger quarantined to {bak_path}: {e}")
+                except Exception:
+                    pass
         return {
             "system": "Hermes-SOC-Lead-Persistent-Memory",
             "learned_false_positives": [],
@@ -144,12 +152,14 @@ class HermesSOCLead:
             print(f"[HermesSOCLead] Error saving memory: {e}")
 
     def is_known_false_positive(self, event: Dict[str, Any]) -> bool:
-        proc_name = event.get("process", {}).get("name", "").lower()
-        host = event.get("host", "").upper()
+        proc = event.get("process", {})
+        proc_name = str(proc.get("name") or proc.get("source_name") or "").lower().strip()
+        host = str(event.get("host", "")).upper().strip()
         for fp in self.memory.get("learned_false_positives", []):
-            pat = fp.get("pattern", "").lower()
-            fp_host = fp.get("host", "*").upper()
-            if pat and pat in proc_name and (fp_host == "*" or fp_host == host):
+            pat = str(fp.get("pattern", "")).lower().strip()
+            fp_host = str(fp.get("host", "*")).upper().strip()
+            # Security (§2.6): Exact process name match (or exact basename), never substring
+            if pat and (pat == proc_name or pat == os.path.basename(proc_name)) and (fp_host == "*" or fp_host == host):
                 return True
         return False
 
@@ -222,11 +232,20 @@ class HermesSOCLead:
 
         # Tool 2: Explain GNN Attack-Path Prediction
         elif "gnn" in msg_lower or "predict" in msg_lower or "target" in msg_lower or "backup" in msg_lower:
+            # Security (§2.5): Dynamically compute probability from active telemetry, never hardcode 94.2%
+            preds = current_graph_summary.get("predictions", []) if isinstance(current_graph_summary, dict) else []
+            if preds and isinstance(preds[0], dict):
+                top_p = preds[0]
+                target = top_p.get("target_name", top_p.get("target", "BACKUP-VAULT-01"))
+                prob = float(top_p.get("probability", 0.0)) * 100
+                return (
+                    f"**Hermes GNN Forecast**: Our PyTorch GraphSAGE neural network calculates node embeddings by aggregating 2-hop "
+                    f"topological neighborhoods. Current telemetry evaluates an edge probability of **{prob:.1f}%** "
+                    f"targeting `{target}`."
+                )
             return (
-                "**Hermes GNN Forecast**: Our PyTorch GraphSAGE neural network calculates node embeddings by aggregating 2-hop "
-                "topological neighborhoods. Because WKSTN-04 initiated SMB port 445 share enumeration and BACKUP-VAULT-01 holds "
-                "the highest centrality and criticality in the domain topology, the model output an edge probability of **94.2%** "
-                "that the attacker intends to compromise the backup repository before executing mass encryption."
+                "**Hermes GNN Forecast**: Attack path forecasting is currently awaiting active telemetry. "
+                "Trigger an APT stage (stage 2+) to compute live GraphSAGE edge probabilities."
             )
 
         # Tool 3: Teach False Positive into Persistent Memory

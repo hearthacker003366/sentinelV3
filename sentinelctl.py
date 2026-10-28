@@ -4,14 +4,35 @@ import os
 import time
 
 def kill_port(port):
+    """Safely terminate only Sentinel/python processes listening on target port (§2.10)."""
+    try:
+        port_int = int(port)
+    except (TypeError, ValueError):
+        return
+
     if os.name == 'nt':
-        out = subprocess.run(f"netstat -ano | findstr :{port}", shell=True, capture_output=True, text=True).stdout
-        for line in out.splitlines():
-            if "LISTENING" in line:
-                pid = line.split()[-1]
-                subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+        try:
+            res = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, check=False)
+            for line in res.stdout.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 5 and "LISTENING" in parts and f":{port_int}" in parts[1]:
+                    pid = parts[-1]
+                    if pid.isdigit() and int(pid) > 4:
+                        # Verify process name is python before killing
+                        tlist = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                               capture_output=True, text=True, check=False)
+                        if "python" in tlist.stdout.lower():
+                            subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True, check=False)
+        except Exception:
+            pass
     else:
-        subprocess.run(f"fuser -k {port}/tcp", shell=True, capture_output=True)
+        try:
+            res = subprocess.run(["lsof", "-t", f"-i:{port_int}"], capture_output=True, text=True, check=False)
+            for pid in res.stdout.strip().split():
+                if pid.isdigit() and int(pid) > 1:
+                    subprocess.run(["kill", "-9", pid], capture_output=True, check=False)
+        except Exception:
+            pass
 
 def start():
     print("[*] Checking port 8515 hygiene...")
@@ -40,13 +61,17 @@ def start():
 def status():
     print("[*] Sentinel Status:")
     if os.name == 'nt':
-        out = subprocess.run(f"netstat -ano | findstr :8515", shell=True, capture_output=True, text=True).stdout
-        if "LISTENING" in out:
+        res = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, check=False)
+        if ":8515" in res.stdout and "LISTENING" in res.stdout:
             print(" - Dashboard: ONLINE (Port 8515)")
         else:
             print(" - Dashboard: OFFLINE")
     else:
-        print(" - OS not natively supported for status check")
+        res = subprocess.run(["lsof", "-i:8515"], capture_output=True, text=True, check=False)
+        if "LISTEN" in res.stdout:
+            print(" - Dashboard: ONLINE (Port 8515)")
+        else:
+            print(" - Dashboard: OFFLINE")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

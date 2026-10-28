@@ -5,12 +5,22 @@ Provides high-performance graph operations with automatic fallback:
 - Zero-config in-memory NetworkX graph when Neo4j is offline
 """
 
+import re
 import sys
 import threading
 from typing import Dict, Any, List, Optional
 import networkx as nx
 
 from backend.graph.schema import GraphSchema
+
+SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+
+def _validate_identifier(name: str, fallback: str = "Entity") -> str:
+    """Security (§2.9): Validate Cypher labels/edge types against fixed identifier vocabulary."""
+    s = str(name).strip()
+    if SAFE_IDENTIFIER_RE.match(s):
+        return s
+    return fallback
 
 
 class GraphManager:
@@ -35,9 +45,10 @@ class GraphManager:
             sys.stderr.write("[GraphManager] Operating in high-performance In-Memory NetworkX mode.\n")
 
     def add_node(self, node_id: str, label: str, properties: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        clean_label = _validate_identifier(label, "Entity")
         with self.lock:
             props = properties or {}
-            props["label"] = label
+            props["label"] = clean_label
             props["id"] = node_id
             self.nx_graph.add_node(node_id, **props)
 
@@ -45,32 +56,33 @@ class GraphManager:
                 try:
                     with self.neo4j_driver.session() as session:
                         session.run(
-                            f"MERGE (n:{label} {{id: $id}}) SET n += $props",
+                            f"MERGE (n:{clean_label} {{id: $id}}) SET n += $props",
                             id=node_id, props=props
                         )
                 except Exception:
                     pass
 
-            return {"id": node_id, "label": label, "properties": props}
+            return {"id": node_id, "label": clean_label, "properties": props}
 
     def add_edge(self, source: str, target: str, edge_type: str, properties: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        clean_edge = _validate_identifier(edge_type, "RELATED_TO")
         with self.lock:
             props = properties or {}
-            props["type"] = edge_type
-            self.nx_graph.add_edge(source, target, key=edge_type, **props)
+            props["type"] = clean_edge
+            self.nx_graph.add_edge(source, target, key=clean_edge, **props)
 
             if self.use_neo4j:
                 try:
                     with self.neo4j_driver.session() as session:
                         session.run(
                             f"MATCH (a {{id: $source}}), (b {{id: $target}}) "
-                            f"MERGE (a)-[r:{edge_type}]->(b) SET r += $props",
+                            f"MERGE (a)-[r:{clean_edge}]->(b) SET r += $props",
                             source=source, target=target, props=props
                         )
                 except Exception:
                     pass
 
-            return {"source": source, "target": target, "type": edge_type, "properties": props}
+            return {"source": source, "target": target, "type": clean_edge, "properties": props}
 
     def ingest_normalized_event(self, event: Dict[str, Any]) -> List[Dict[str, Any]]:
         with self.lock:

@@ -70,41 +70,41 @@ def tail_log():
             else:
                 print(f"{CYAN}[ALERT LOG] {line.strip()}{RESET}")
             
-            # 1. Detect SSH Brute Force
-            ssh_match = re.search(r'Failed password for .* from ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)', line)
+            # 1. Detect SSH Brute Force (IPv4 + IPv6, >= threshold §2.9, §2.20)
+            ssh_match = re.search(r'Failed password for .* from ([0-9a-fA-F:.]+(?:%[0-9a-zA-Z]+)?)', line)
             if ssh_match:
                 ip = ssh_match.group(1)
                 failed_logins[ip] += 1
-                if failed_logins[ip] == 5:
+                if failed_logins[ip] >= 5:
                     report_threat(ip, "BRUTE_FORCE_SSH", "5+ failed SSH login attempts detected.")
                     failed_logins[ip] = 0
             
-            # 2. Detect Port Scanning
-            scan_match = re.search(r'UFW BLOCK.*SRC=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)', line)
+            # 2. Detect Port Scanning (IPv4 + IPv6, >= threshold §2.9, §2.20)
+            scan_match = re.search(r'UFW BLOCK.*SRC=([0-9a-fA-F:.]+(?:%[0-9a-zA-Z]+)?)', line)
             if scan_match:
                 ip = scan_match.group(1)
                 port_scans[ip] += 1
-                if port_scans[ip] == 10:
+                if port_scans[ip] >= 10:
                     report_threat(ip, "PORT_SCAN_NMAP", "Aggressive network port scanning detected.")
                     port_scans[ip] = 0
                     
-            # 3. Detect Privilege Escalation
-            sudo_match = re.search(r'sudo:.*authentication failure.*rhost=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)', line)
+            # 3. Detect Privilege Escalation (IPv4 + IPv6, >= threshold §2.9, §2.20)
+            sudo_match = re.search(r'sudo:.*authentication failure.*rhost=([0-9a-fA-F:.]+(?:%[0-9a-zA-Z]+)?)', line)
             if sudo_match:
                 ip = sudo_match.group(1)
                 sudo_failures[ip] += 1
-                if sudo_failures[ip] == 3:
+                if sudo_failures[ip] >= 3:
                     report_threat(ip, "PRIVILEGE_ESCALATION", "Multiple failed 'sudo' root escalation attempts.")
                     sudo_failures[ip] = 0
 
-            # 4. Detect SQL Injection
-            sqli_match = re.search(r'\[SQLi\].*SRC=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)', line)
+            # 4. Detect SQL Injection (IPv4 + IPv6)
+            sqli_match = re.search(r'\[SQLi\].*SRC=([0-9a-fA-F:.]+(?:%[0-9a-zA-Z]+)?)', line)
             if sqli_match:
                 ip = sqli_match.group(1)
                 report_threat(ip, "SQL_INJECTION", "Malicious SQL payload detected in HTTP request.")
 
-            # 5. Detect Slowloris DDoS
-            ddos_match = re.search(r'\[Slowloris\].*SRC=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)', line)
+            # 5. Detect Slowloris DDoS (IPv4 + IPv6)
+            ddos_match = re.search(r'\[Slowloris\].*SRC=([0-9a-fA-F:.]+(?:%[0-9a-zA-Z]+)?)', line)
             if ddos_match:
                 ip = ddos_match.group(1)
                 report_threat(ip, "DDOS_SLOWLORIS", "Connection exhaustion attack detected on port 80.")
