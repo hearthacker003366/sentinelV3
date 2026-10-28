@@ -125,10 +125,27 @@ class HermesSOCLead:
         self.memory_file = memory_file
         self.memory = self._load_memory()
 
+        # System Prompt (Soul Prompt)
+        self.system_prompt = self.get_system_prompt()
+
         # LLM Provider Configuration
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENCODE_API_KEY")
         self.gemini_key = os.getenv("GEMINI_API_KEY")
         self.ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    @classmethod
+    def get_system_prompt(cls) -> str:
+        """Loads the verified Sentinel SOC Lead system prompt from hermes_master_soul_v3.2.md."""
+        curr_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.dirname(os.path.dirname(curr_dir))
+        soul_path = os.path.join(root_dir, "hermes_master_soul_v3.2.md")
+        if os.path.exists(soul_path):
+            try:
+                with open(soul_path, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception:
+                pass
+        return "You are Hermes, the Autonomous Cognitive Intelligence Engine for PROJECT SENTINEL V3."
 
     def _load_memory(self) -> Dict[str, Any]:
         if os.path.exists(self.memory_file):
