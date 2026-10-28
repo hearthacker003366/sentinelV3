@@ -20,24 +20,35 @@ def init_demo_log():
         open(LOG_PATH, "w").close()
 
 def report_threat(ip, threat_type, details):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO threats (ip, type, details, status, timestamp) VALUES (?, ?, ?, 'NEW', ?)", (ip, threat_type, details, datetime.datetime.utcnow().isoformat() + "Z"))
-    conn.commit()
-    conn.close()
-    
-    # Bridge D7: Send to web API so it appears in the visual graph
+    # Laya System-1 Fast Triage & Deceptive Dispatch (<50ms)
+    triage_res = None
     try:
-        import urllib.request, json
-        data = json.dumps({"ip": ip, "type": threat_type, "details": details, "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}).encode('utf-8')
-        req = urllib.request.Request("http://127.0.0.1:8515/api/ingest_threat", data=data, headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=2)
+        from backend.triage.laya_triage_engine import get_laya_engine
+        engine = get_laya_engine()
+        triage_res = engine.triage_event(details, ip=ip, threat_type=threat_type)
+        engine.dispatch_threat(ip, threat_type, details, triage_res)
     except Exception as e:
-        pass
-    
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT INTO threats (ip, type, details, status, timestamp) VALUES (?, ?, ?, 'NEW', ?)", (ip, threat_type, details, datetime.datetime.utcnow().isoformat() + "Z"))
+        conn.commit()
+        conn.close()
+        try:
+            import urllib.request, json
+            data = json.dumps({"ip": ip, "type": threat_type, "details": details, "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}).encode('utf-8')
+            req = urllib.request.Request("http://127.0.0.1:8515/api/ingest_threat", data=data, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=2)
+        except Exception:
+            pass
+
     print(f"\n{RED}[!!!] CRITICAL THREAT DETECTED [!!!]{RESET}")
     print(f"{RED}Type: {threat_type} | Source IP: {ip}{RESET}")
-    print(f"{RED}Action: Written to database. Waiting for Hermes Active Defense...{RESET}\n")
+    if triage_res:
+        print(f"{CYAN}[LAYA SYSTEM-1] Verdict: {triage_res.verdict.upper()} ({triage_res.confidence*100:.1f}%) | Latency: {triage_res.latency_ms}ms{RESET}")
+        print(f"{CYAN}[LAYA SYSTEM-1] Forecast Path: {' -> '.join(triage_res.predicted_path)}{RESET}")
+        print(f"{CYAN}[LAYA SYSTEM-1] Action: {triage_res.action} (Honeypot Deployed & Hermes Awakened){RESET}\n")
+    else:
+        print(f"{RED}Action: Written to database. Waiting for Hermes Active Defense...{RESET}\n")
 
 def tail_log():
     init_demo_log()

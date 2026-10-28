@@ -24,3 +24,9 @@ firewall_remediation_dry_run.sh
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Runtime queues and generated reports
+backend/reasoning/hermes_queue.json
+Incident_Report_*.html
+remediation_patch_*.txt
+
