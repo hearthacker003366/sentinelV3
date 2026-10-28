@@ -195,6 +195,7 @@ class HoneypotService:
             try:
                 srv = socketserver.ThreadingTCPServer((self.bind_host, port), self._make_handler(pot_type))
                 srv.daemon_threads = True
+                self.ports[pot_type] = srv.server_address[1]
                 self._servers.append(srv)
                 t = threading.Thread(target=srv.serve_forever, daemon=True,
                                      name=f"sentinel-honeypot-{pot_type}")

@@ -99,13 +99,21 @@ class ContainmentBot:
     """Specialized Sub-Bot: Two-Tier SOAR Response Formulation"""
     @staticmethod
     def plan_soar_response(compromised_host: str, predicted_targets: List[Dict[str, Any]]) -> Dict[str, Any]:
-        top = predicted_targets[0] if predicted_targets else {"target_name": "BACKUP-VAULT-01", "confidence_percentage": 94.2}
+        top = predicted_targets[0] if predicted_targets else {"target_name": "UNKNOWN_HOST", "confidence_percentage": 0.0, "status": "NO_PREDICTION"}
+        conf = top.get("confidence_percentage", 0.0)
+        target_name = top.get("target_name", "UNKNOWN_HOST")
+        if conf > 0.0 and target_name != "UNKNOWN_HOST":
+            tier_2_action = f"Request Analyst Authorization to quarantine {compromised_host} before it can breach {target_name} ({conf}% confidence)."
+            target_to_protect = target_name
+        else:
+            tier_2_action = f"Request Analyst Authorization to quarantine {compromised_host} (No lateral path predicted)."
+            target_to_protect = "UNSPECIFIED"
         return {
             "bot": "ContainmentBot",
             "tier_1_action": "Instantly sever external C2 IP addresses on perimeter firewall (Zero impact to internal traffic).",
-            "tier_2_action": f"Request Analyst Authorization to quarantine {compromised_host} before it can breach {top['target_name']} ({top['confidence_percentage']}% confidence).",
+            "tier_2_action": tier_2_action,
             "recommended_target_to_isolate": compromised_host,
-            "target_to_protect": top['target_name']
+            "target_to_protect": target_to_protect
         }
 
 
@@ -181,13 +189,21 @@ class HermesSOCLead:
         threat_intel = ThreatIntelBot.correlate_mitre(active_alerts)
         containment = ContainmentBot.plan_soar_response(host, predicted_paths)
 
-        top_pred = predicted_paths[0] if predicted_paths else {"target_name": "BACKUP-VAULT-01", "confidence_percentage": 94.2}
+        top_pred = predicted_paths[0] if predicted_paths else {"target_name": "UNKNOWN_HOST", "confidence_percentage": 0.0, "status": "NO_PREDICTION"}
+        conf = top_pred.get("confidence_percentage", 0.0)
+        target_name = top_pred.get("target_name", "UNKNOWN_HOST")
+        if conf > 0.0 and target_name != "UNKNOWN_HOST":
+            gnn_line = f"[GNN Forecast] PyTorch GraphSAGE link prediction identifies {target_name} as the next hop with {conf}% probability."
+            gnn_narrative = f"Sentinel's Graph Neural Network has calculated a {conf}% probability that the adversary's next lateral target is {target_name}. Two-Tier SOAR containment has been prepared to isolate {host} and protect {target_name} before data encryption can commence."
+        else:
+            gnn_line = "[GNN Forecast] No lateral hop prediction available for current graph state."
+            gnn_narrative = f"Sentinel's Graph Neural Network found no active lateral movement path exceeding threshold. Two-Tier SOAR containment has been prepared to isolate {host}."
 
         # Multi-Step Cognitive Chain-of-Thought
         cot_reasoning = [
             f"[Observation] Telemetry confirms suspicious process chain on {host} spawning PowerShell from an Office document.",
             f"[Threat Analysis] Sigma engine matched {len(threat_intel['mapped_techniques'])} adversary tactics, notably VSSAdmin shadow copy deletion.",
-            f"[GNN Forecast] PyTorch GraphSAGE link prediction identifies {top_pred['target_name']} as the next hop with {top_pred['confidence_percentage']}% probability.",
+            gnn_line,
             f"[Containment Recommendation] Issue Tier-1 auto-drop on external C2 and serve a Tier-2 authorization card for immediate {host} network isolation."
         ]
 
@@ -196,9 +212,7 @@ class HermesSOCLead:
             f"The attack escalated with defense evasion tactics including deletion of Volume Shadow Copies "
             f"(MITRE {[t['id'] for t in threat_intel['mapped_techniques']]}), indicating active ransomware deployment. "
             f"The attacker initiated internal network reconnaissance across SMB port 445. "
-            f"Sentinel's Graph Neural Network has calculated a {top_pred['confidence_percentage']}% probability that the adversary's "
-            f"next lateral target is {top_pred['target_name']}. "
-            f"Two-Tier SOAR containment has been prepared to isolate {host} and protect {top_pred['target_name']} before data encryption can commence."
+            f"{gnn_narrative}"
         )
 
         return {

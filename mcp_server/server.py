@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sentinel Unified MCP Server (V3)
 ================================
 ONE long-lived daemon that reunifies BOTH generations of the project:
@@ -28,12 +28,15 @@ Compliance:
 """
 
 import os
+import re
+import html
 import sys
 from dotenv import load_dotenv
 HERE = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(HERE, '..', '.env'))
 import json
 import time
+import threading
 import sqlite3
 import urllib.request
 import urllib.parse
@@ -85,6 +88,7 @@ class SentinelUnifiedServer:
         self._load_rl_state()
 
         # ---- Episode bookkeeping ----
+        self._state_lock = threading.Lock()
         self.stage_history: List[int] = []
         self.last_predictions: List[Dict[str, Any]] = []
         self.last_alerts: List[Dict[str, Any]] = []
@@ -129,9 +133,12 @@ class SentinelUnifiedServer:
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 row = conn.execute("SELECT value FROM rl_state_v3 WHERE key='cumulative'").fetchone()
-            if row:
-                self.rl.cumulative_reward = float(row[0])
-        except (sqlite3.Error, ValueError):
+                if row:
+                    self.rl.cumulative_reward = float(row[0])
+                ep_row = conn.execute("SELECT value FROM rl_state_v3 WHERE key='episodes'").fetchone()
+                if ep_row and ep_row[0]:
+                    self.rl.episode_history = json.loads(ep_row[0])
+        except (sqlite3.Error, ValueError, json.JSONDecodeError):
             pass
 
     def _save_rl_state(self):
@@ -139,6 +146,8 @@ class SentinelUnifiedServer:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute("INSERT OR REPLACE INTO rl_state_v3 (key, value) VALUES ('cumulative', ?)",
                              (str(self.rl.cumulative_reward),))
+                conn.execute("INSERT OR REPLACE INTO rl_state_v3 (key, value) VALUES ('episodes', ?)",
+                             (json.dumps(self.rl.episode_history),))
         except sqlite3.Error:
             pass
 
@@ -313,27 +322,39 @@ class SentinelUnifiedServer:
         ip = str(args.get("ip", "unknown"))
         threat_type = str(args.get("threat_type", "UNSPECIFIED"))
         predicted_path = str(args.get("predicted_path", "N/A"))
+        safe_ip_name = re.sub(r'[^a-zA-Z0-9_-]', '_', ip)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = os.path.join(_paths.SENTINEL_HOME, f"Incident_Report_{ip.replace('.', '_')}_{ts}.html")
+        report_dir = getattr(_paths, "reports_dir", lambda: os.path.join(_paths.SENTINEL_HOME, "var", "reports"))()
+        os.makedirs(report_dir, exist_ok=True)
+        filepath = os.path.join(report_dir, f"Incident_Report_{safe_ip_name}_{ts}.html")
         intel_v = self.intel.check_ip(ip)
-        html = f"""<html><head><title>Sentinel V3 Incident Report</title></head>
+        escaped_ip = html.escape(ip)
+        escaped_threat = html.escape(threat_type)
+        escaped_path = html.escape(predicted_path)
+        escaped_detail = html.escape(str(intel_v.get('source_detail', '')))
+        escaped_mode = html.escape(str(intel_v.get('mode', 'UNKNOWN')))
+        html_doc = f"""<html><head><title>Sentinel V3 Incident Report</title></head>
 <body style="font-family:monospace;background:#0a0a12;color:#0f0;padding:2em">
 <h1>SENTINEL V3 // INCIDENT REPORT</h1>
 <p><b>Generated:</b> {datetime.now(timezone.utc).isoformat()}</p>
-<p><b>Attacker IP:</b> {ip}</p>
-<p><b>Threat Type:</b> {threat_type}</p>
-<p><b>Predicted Attack Path:</b> {predicted_path}</p>
-<p><b>Threat Intel:</b> [{intel_v['mode']}] confidence {intel_v['confidence']}% â€” {intel_v['source_detail']}</p>
+<p><b>Attacker IP:</b> {escaped_ip}</p>
+<p><b>Threat Type:</b> {escaped_threat}</p>
+<p><b>Predicted Attack Path:</b> {escaped_path}</p>
+<p><b>Threat Intel:</b> [{escaped_mode}] confidence {intel_v.get('confidence', 0)}% — {escaped_detail}</p>
 </body></html>"""
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(html)
+            f.write(html_doc)
         return {"mode": "REAL", "filepath": filepath, "intel_mode": intel_v["mode"]}
 
     def t_generate_waf_rule(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        threat_type = str(args.get("threat_type", ""))
-        ip = str(args.get("ip", ""))
+        raw_threat_type = str(args.get("threat_type", ""))
+        raw_ip = str(args.get("ip", ""))
+        threat_type = raw_threat_type.replace("\r", "").replace("\n", "").strip()
+        ip = raw_ip.replace("\r", "").replace("\n", "").strip()
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = os.path.join(_paths.SENTINEL_HOME, f"remediation_patch_{ts}.txt")
+        report_dir = getattr(_paths, "reports_dir", lambda: os.path.join(_paths.SENTINEL_HOME, "var", "reports"))()
+        os.makedirs(report_dir, exist_ok=True)
+        filepath = os.path.join(report_dir, f"remediation_patch_{ts}.txt")
         rule = (f"# AUTO-GENERATED REMEDIATION PATCH BY SENTINEL V3\n"
                 f"# Target Threat: {threat_type}\n# Source IP: {ip}\n")
         if threat_type == "SQL_INJECTION":
@@ -473,17 +494,32 @@ class SentinelUnifiedServer:
         if result.get("status") == "APPROVED_AND_ISOLATED":
             self._persist_audit(result)
             latency = (time.time() - issued) if issued else 999.0
+            current_stage = self.stage_history[-1] if self.stage_history else 1
+            real_state = [
+                float(current_stage) / 5.0,
+                float(len(self.matched_alerts)) / 10.0,
+                1.0 if any(a.get("severity") in ("CRITICAL", "HIGH") for a in self.matched_alerts) else 0.0,
+                1.0 if latency < 2.5 else 0.0,
+            ] + [0.0] * 12
             rl_entry = self.rl.evaluate_defense_action(
-                stage=self.stage_history[-1] if self.stage_history else 0,
+                stage=current_stage,
                 action="ISOLATE_HOST",
                 crown_jewel_safe=True,
                 early_interception=latency < 2.5,
-                state_vector=[0.0] * self.rl.state_dim,
+                state_vector=real_state,
             )
             self._save_rl_state()
             result["rl"] = rl_entry
             result["approval_latency_s"] = round(latency, 2)
         return result
+
+    def t_unquarantine_host(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        host_id = str(args.get("host_id", ""))
+        analyst = str(args.get("analyst", "SOC-ADMIN"))
+        result = self.soar.unquarantine_host(host_id, analyst_id=analyst)
+        self._persist_audit({"id": f"UNQ-{int(time.time())}", "tier": 2, "action": "UNQUARANTINE_HOST",
+                             "target": host_id, "status": result.get("status"), "timestamp": result.get("timestamp")})
+        return {"mode": "REAL", **result}
 
     def t_get_audit_trail(self, args: Dict[str, Any]) -> Dict[str, Any]:
         entries = []

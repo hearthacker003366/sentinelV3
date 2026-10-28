@@ -71,10 +71,10 @@ else:
     # High-performance NumPy fallback implementation
     class AttackPathGraphSAGE:
         def __init__(self, in_dim: int = 16, hidden_dim: int = 32, out_dim: int = 16):
-            np.random.seed(42)
-            self.w1 = np.random.randn(in_dim, hidden_dim) * 0.1
-            self.w2 = np.random.randn(hidden_dim, out_dim) * 0.1
-            self.link_w = np.random.randn(out_dim, out_dim) * 0.1
+            rng = np.random.default_rng(42)
+            self.w1 = rng.standard_normal((in_dim, hidden_dim)) * 0.1
+            self.w2 = rng.standard_normal((hidden_dim, out_dim)) * 0.1
+            self.link_w = rng.standard_normal((out_dim, out_dim)) * 0.1
 
         def encode(self, x: np.ndarray, adj: np.ndarray) -> np.ndarray:
             deg = np.sum(adj, axis=-1, keepdims=True)

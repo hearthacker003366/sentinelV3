@@ -10,7 +10,7 @@ Implements an adaptive policy evaluator inspired by CyberBattleSim:
 - Tracks Cumulative Episode Reward and Mathematical Expectancy
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import random
 
@@ -46,11 +46,14 @@ class BlueTeamRLEvaluator:
         self.episode_history: List[Dict[str, Any]] = []
         self.current_policy: str = "PPO-Adaptive-Defender-v2"
         
+        # Local RNG instance (§2.23)
+        self.rng = random.Random(42)
+        
         # DQN Setup
         self.state_dim = 16
         self.action_dim = len(self.ACTIONS)
         self.gamma = 0.99
-        self.epsilon = 0.1  # Exploration rate
+        self.epsilon = 0.1  # Exploration rate (decays with experience)
         
         if TORCH_AVAILABLE:
             self.dqn = DefenseDQN(self.state_dim, self.action_dim)
@@ -60,15 +63,18 @@ class BlueTeamRLEvaluator:
             self.dqn = None
 
     def select_action(self, state_vector: List[float]) -> str:
-        """Selects an action using epsilon-greedy policy from the DQN."""
+        """Selects an action using epsilon-greedy policy from the DQN (§2.26)."""
         if not TORCH_AVAILABLE or self.dqn is None:
             return "ISOLATE_HOST"
         
-        if random.random() < self.epsilon:
-            return random.choice(self.ACTIONS)
+        # Local RNG usage
+        if self.rng.random() < self.epsilon:
+            return self.rng.choice(self.ACTIONS)
             
         with torch.no_grad():
-            state_t = torch.tensor(state_vector, dtype=torch.float32).unsqueeze(0)
+            if len(state_vector) < self.state_dim:
+                state_vector = list(state_vector) + [0.0] * (self.state_dim - len(state_vector))
+            state_t = torch.tensor(state_vector[:self.state_dim], dtype=torch.float32).unsqueeze(0)
             q_values = self.dqn(state_t)
             action_idx = torch.argmax(q_values, dim=1).item()
             return self.ACTIONS[action_idx]
@@ -80,8 +86,13 @@ class BlueTeamRLEvaluator:
         crown_jewel_safe: bool,
         early_interception: bool,
         is_false_positive: bool = False,
-        state_vector: List[float] = None
+        state_vector: Optional[List[float]] = None
     ) -> Dict[str, Any]:
+        # Strict validation: raise ValueError on unknown actions (§2.26)
+        if action not in self.ACTIONS:
+            raise ValueError(f"Unknown action '{action}'. Valid actions are {self.ACTIONS}")
+
+        action_idx = self.ACTIONS.index(action)
         reward_delta = 0.0
         reasons = []
 
@@ -103,23 +114,27 @@ class BlueTeamRLEvaluator:
 
         self.cumulative_reward += reward_delta
         
-        # DQN Training Step (Online learning)
+        # Targeted Q-learning step without collapsing unselected coordinates (§2.26)
         loss_val = 0.0
         if TORCH_AVAILABLE and self.dqn is not None and state_vector is not None:
-            state_t = torch.tensor(state_vector, dtype=torch.float32).unsqueeze(0)
-            action_idx = self.ACTIONS.index(action) if action in self.ACTIONS else 1
+            if len(state_vector) < self.state_dim:
+                state_vector = list(state_vector) + [0.0] * (self.state_dim - len(state_vector))
+            state_t = torch.tensor(state_vector[:self.state_dim], dtype=torch.float32).unsqueeze(0)
             
             self.optimizer.zero_grad()
             q_values = self.dqn(state_t)
             
-            # Simplified Q-learning target: just the reward (assuming terminal state for this threat)
-            target = q_values.clone().detach()
-            target[0][action_idx] = reward_delta
+            # Loss is calculated only on the taken action coordinate
+            pred_q = q_values[0, action_idx]
+            target_q = torch.tensor(reward_delta, dtype=torch.float32)
             
-            loss = self.criterion(q_values, target)
+            loss = self.criterion(pred_q, target_q)
             loss.backward()
             self.optimizer.step()
-            loss_val = loss.item()
+            loss_val = float(loss.item())
+
+            # Decay exploration rate honestly (§2.26)
+            self.epsilon = max(0.01, self.epsilon * 0.995)
 
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -135,12 +150,15 @@ class BlueTeamRLEvaluator:
         return entry
 
     def get_scoreboard(self) -> Dict[str, Any]:
+        # Honestly format real cumulative reward instead of static +15.0 (§2.26)
+        standing_str = f"OPTIMAL_DEFENSE ({self.cumulative_reward:+.1f} PTS)" if self.cumulative_reward >= 15.0 else f"{self.cumulative_reward:+.1f} PTS"
         return {
             "policy": self.current_policy,
             "cumulative_reward": self.cumulative_reward,
-            "standing": "OPTIMAL_DEFENSE (+15.0 PTS)" if self.cumulative_reward >= 15.0 else f"{self.cumulative_reward:+.1f} PTS",
+            "standing": standing_str,
             "episodes_logged": len(self.episode_history),
-            "recent_entry": self.episode_history[-1] if self.episode_history else None
+            "recent_entry": self.episode_history[-1] if self.episode_history else None,
+            "epsilon": round(self.epsilon, 4)
         }
 
     def reset_scoreboard(self):

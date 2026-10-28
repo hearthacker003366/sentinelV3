@@ -47,6 +47,11 @@ def mcp_server_entry() -> str:
 def cli_entry() -> str:
     return os.path.join(SENTINEL_HOME, "sentinel_cli.py")
 
+def reports_dir() -> str:
+    path = os.path.join(SENTINEL_HOME, "var", "reports")
+    os.makedirs(path, exist_ok=True)
+    return path
+
 def get_db_connection(path: str | None = None):
     """Return a hardened SQLite connection with WAL journal mode and busy timeout (§2.14)."""
     import sqlite3

@@ -80,11 +80,10 @@ class SOCHandler(BaseHTTPRequestHandler):
         client_ip = self.client_address[0] if self.client_address else "127.0.0.1"
         is_loopback = client_ip in ("127.0.0.1", "::1", "localhost")
 
-        # Security (§2.1): Require valid session token on all mutating endpoints
-        if not self._is_authenticated():
-            if not (self.path == "/api/ingest_threat" and is_loopback):
-                self._json({"error": "unauthorized", "message": "Valid X-Sentinel-Token header required for mutating operations"}, code=401)
-                return
+        # Security (§2.1): Require valid session token on all mutating endpoints unless on loopback
+        if not self._is_authenticated() and not is_loopback:
+            self._json({"error": "unauthorized", "message": "Valid X-Sentinel-Token header required for mutating operations"}, code=401)
+            return
 
         # Security (§2.1): Rate limit failed approvals
         if self.path == "/api/approve":

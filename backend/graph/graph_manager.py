@@ -27,6 +27,7 @@ class GraphManager:
     def __init__(self, neo4j_uri: Optional[str] = None, neo4j_auth: Optional[tuple] = None):
         self.lock = threading.RLock()
         self.nx_graph = nx.MultiDiGraph()
+        self.version: int = 0
         self.use_neo4j = False
         self.neo4j_driver = None
 

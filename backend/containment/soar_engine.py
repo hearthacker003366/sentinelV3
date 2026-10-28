@@ -71,7 +71,7 @@ class SOAREngine:
         for t in expired:
             self.pending_tokens.pop(t, None)
 
-    def generate_isolation_request(self, host_id: str, reason: str, predicted_target: str = "BACKUP-VAULT-01", confidence: float = 94.2) -> Dict[str, Any]:
+    def generate_isolation_request(self, host_id: str, reason: str, predicted_target: str = "UNKNOWN_TARGET", confidence: float = 0.0) -> Dict[str, Any]:
         import secrets
         self.sweep_expired_tokens()
         # Security (§2.2): 256-bit cryptographically secure token

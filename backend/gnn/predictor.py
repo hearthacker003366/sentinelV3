@@ -1,19 +1,15 @@
-﻿import math
+import math
 import random
+import logging
+from typing import List, Dict, Any, Optional
 import numpy as np
-from typing import List, Dict, Any
 import networkx as nx
+
+logger = logging.getLogger(__name__)
 
 try:
     import torch
     import torch.nn as nn
-    import random
-    import numpy as np
-    random.seed(42)
-    np.random.seed(42)
-    torch.manual_seed(42)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(42)
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
@@ -21,27 +17,26 @@ except ImportError:
 from backend.graph.schema import GraphSchema
 from backend.graph.graph_manager import GraphManager
 
+
 class GNNModel(nn.Module if TORCH_AVAILABLE else object):
     def __init__(self, in_features: int, hidden_dim: int, out_features: int):
-        import random
-        import numpy as np
-        random.seed(42)
-        np.random.seed(42)
-        if TORCH_AVAILABLE:
-            torch.manual_seed(42)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(42)
-
         super().__init__()
         self.in_features = in_features
         self.hidden_dim = hidden_dim
         self.out_features = out_features
         
         if TORCH_AVAILABLE:
+            # Use deterministic local generator; never touch global RNG (§2.23)
+            g = torch.Generator()
+            g.manual_seed(42)
             self.fc1 = nn.Linear(in_features, hidden_dim)
             self.relu = nn.ReLU()
             self.fc2 = nn.Linear(hidden_dim, out_features)
-            self.link_w = nn.Parameter(torch.randn(out_features, out_features) * 0.1)
+            torch.nn.init.xavier_uniform_(self.fc1.weight, generator=g)
+            torch.nn.init.zeros_(self.fc1.bias)
+            torch.nn.init.xavier_uniform_(self.fc2.weight, generator=g)
+            torch.nn.init.zeros_(self.fc2.bias)
+            self.link_w = nn.Parameter(torch.randn((out_features, out_features), generator=g) * 0.1)
 
     def encode(self, x, adj):
         if not TORCH_AVAILABLE:
@@ -57,12 +52,18 @@ class GNNModel(nn.Module if TORCH_AVAILABLE else object):
             return 0.5
         score = torch.sum(torch.matmul(z_src, self.link_w) * z_tgt, dim=-1)
         score = score - topological_penalty
-        return torch.sigmoid(score / 3.0) # Temperature scaling for calibrated realism
+        return torch.sigmoid(score / 3.0)  # Temperature scaling for calibrated realism
+
 
 class PathPredictor:
     def __init__(self, graph_mgr: GraphManager, hidden_dim: int = 16, embedding_dim: int = 8):
         self.graph_mgr = graph_mgr
-        self.is_trained = False
+        self.is_trained: bool = False
+        self._last_trained_version: int = -1
+        
+        # Local RNG instances (§2.23)
+        self.rng = random.Random(42)
+        self.np_rng = np.random.default_rng(42)
         
         # 8 features: [is_host, is_user, is_process, is_ip, is_critical, is_compromised, degree_centrality, pagerank]
         self.model = GNNModel(in_features=8, hidden_dim=hidden_dim, out_features=embedding_dim)
@@ -72,13 +73,21 @@ class PathPredictor:
         n_count = len(nodes)
         node_to_idx = {n: i for i, n in enumerate(nodes)}
         
-        # Calculate real structural metrics
-        try:
-            centrality = nx.degree_centrality(nx_graph)
-            pagerank = nx.pagerank(nx_graph)
-        except:
-            centrality = {n: 0.0 for n in nodes}
-            pagerank = {n: 0.0 for n in nodes}
+        # Specific exception handling for structural metrics (§2.25)
+        centrality = {}
+        pagerank = {}
+        if nodes:
+            try:
+                centrality = nx.degree_centrality(nx_graph)
+                pagerank = nx.pagerank(nx_graph, alpha=0.85, max_iter=200)
+            except (nx.PowerIterationFailedConvergence, ZeroDivisionError) as e:
+                logger.warning("PageRank calculation defaulted to uniform distribution: %s", e)
+                centrality = {n: 0.0 for n in nodes}
+                pagerank = {n: 1.0 / len(nodes) for n in nodes}
+            except Exception as e:
+                logger.error("Structural metric calculation error: %s", e)
+                centrality = {n: 0.0 for n in nodes}
+                pagerank = {n: 1.0 / len(nodes) for n in nodes}
 
         feats = np.zeros((n_count, 8), dtype=np.float32)
         for n_id, data in nx_graph.nodes(data=True):
@@ -95,39 +104,39 @@ class PathPredictor:
             
         return feats, node_to_idx
 
-    def train_on_topology(self, epochs: int = 25, lr: float = 0.01) -> float:
-        import random; random.seed(42)
-        import numpy as np; np.random.seed(42)
-        if TORCH_AVAILABLE:
-            import torch
-            torch.manual_seed(42)
-
+    def train_on_topology(self, epochs: int = 25, lr: float = 0.01) -> Optional[float]:
+        # Ambiguous 0.0 loss resolved with distinct None sentinel (§2.25)
         if not TORCH_AVAILABLE:
-            return 0.0
+            return None
 
         nx_graph = self.graph_mgr.nx_graph
         nodes = list(nx_graph.nodes())
-        if len(nodes) < 2: return 0.0
+        if len(nodes) < 2:
+            return None
 
         feats, node_to_idx = self._compute_features(nx_graph)
         n_count = len(nodes)
         adj = np.zeros((n_count, n_count), dtype=np.float32)
-        pos_edges = []
+        
+        # Deduplicate directed edges to avoid double counting loss (§2.22, §2.25)
+        pos_edges_set = set()
         for u, v in nx_graph.edges():
             if u in node_to_idx and v in node_to_idx:
                 i, j = node_to_idx[u], node_to_idx[v]
-                adj[i, j] = 1.0
-                adj[j, i] = 1.0
-                pos_edges.append((i, j))
+                adj[i, j] = 1.0  # Directed adjacency: attacker -> victim preserved (§2.22)
+                pos_edges_set.add((i, j))
+        
+        pos_edges = list(pos_edges_set)
         np.fill_diagonal(adj, 1.0)
 
-        if not pos_edges: return 0.0
+        if not pos_edges:
+            return None
 
-        # Authentic negative sampling
+        # Negative sampling with instance-local RNG (§2.23)
         neg_edges = []
         for _ in range(len(pos_edges) * 2):
-            u_idx = random.randint(0, n_count - 1)
-            v_idx = random.randint(0, n_count - 1)
+            u_idx = self.rng.randint(0, n_count - 1)
+            v_idx = self.rng.randint(0, n_count - 1)
             if u_idx != v_idx and adj[u_idx, v_idx] == 0:
                 neg_edges.append((u_idx, v_idx))
         if not neg_edges:
@@ -160,6 +169,7 @@ class PathPredictor:
             last_loss = float(loss.item())
 
         self.is_trained = True
+        self._last_trained_version = getattr(self.graph_mgr, "version", 0)
         return last_loss
 
     def predict_next_hop(self, source_host_id: str) -> List[Dict[str, Any]]:
@@ -169,9 +179,11 @@ class PathPredictor:
         if not nodes or source_host_id not in nodes:
             return []
 
-        # Train on the fly to embed structural features genuinely
-        if not self.is_trained:
+        # Invalidate embeddings and retrain if graph mutated (§2.25)
+        current_version = getattr(self.graph_mgr, "version", 0)
+        if (not self.is_trained) or (current_version != self._last_trained_version):
             self.train_on_topology(epochs=30)
+            self._last_trained_version = current_version
 
         feats, node_to_idx = self._compute_features(nx_graph)
         n_count = len(nodes)
@@ -179,8 +191,7 @@ class PathPredictor:
         adj = np.zeros((n_count, n_count), dtype=np.float32)
         for u, v in nx_graph.edges():
             if u in node_to_idx and v in node_to_idx:
-                adj[node_to_idx[u], node_to_idx[v]] = 1.0
-                adj[node_to_idx[v], node_to_idx[u]] = 1.0
+                adj[node_to_idx[u], node_to_idx[v]] = 1.0  # Directed adjacency (§2.22)
         np.fill_diagonal(adj, 1.0)
 
         if TORCH_AVAILABLE:
@@ -190,7 +201,7 @@ class PathPredictor:
             with torch.no_grad():
                 embeddings = self.model.encode(x_tensor, adj_tensor)
         else:
-            embeddings = np.zeros((n_count, 8))
+            embeddings = np.zeros((n_count, 8), dtype=np.float32)
 
         src_idx = node_to_idx[source_host_id]
         
@@ -207,7 +218,7 @@ class PathPredictor:
                 penalty = float(distance) * 0.5
             except nx.NetworkXNoPath:
                 distance = None
-                penalty = 10.0 # Unreachable mathematically
+                penalty = 10.0  # Unreachable mathematically
             except nx.NodeNotFound:
                 distance = None
                 penalty = 10.0
@@ -221,12 +232,12 @@ class PathPredictor:
                 with torch.no_grad():
                     prob_tensor = self.model.predict_link(z_src, z_tgt, topological_penalty=penalty)
                 prob = float(prob_tensor.item())
+                mode = "GNN-TORCH"
             else:
-                prob = 0.5 - (penalty * 0.1)
-                
-            # No hardcoded bounds! Pure sigmoid output.
-            prob = max(0.0, min(1.0, prob))
-            
+                # Honest heuristic arithmetic without false claims (§2.24)
+                prob = max(0.0, min(1.0, 0.5 - (penalty * 0.1)))
+                mode = "HEURISTIC-FALLBACK"
+
             # Dynamic Attack Vector based on topology
             is_critical = data.get("criticality") == "HIGH"
             vec = "Graph Topology Reachability (unreachable — heavy penalty)" if distance is None else "Graph Topology Reachability"
@@ -241,10 +252,10 @@ class PathPredictor:
                 "is_critical": is_critical,
                 "probability": round(prob, 4),
                 "confidence_percentage": round(prob * 100, 1),
-                "attack_vector": vec
+                "attack_vector": vec,
+                "distance": distance,
+                "mode": mode,  # Honest mode reporting (§2.24)
             })
 
-        predictions.sort(key=lambda p: p["probability"], reverse=True)
+        predictions.sort(key=lambda p: (-p["probability"], p["target"]))
         return predictions
-
-

