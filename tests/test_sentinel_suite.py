@@ -214,7 +214,8 @@ class TestSentinelPlatform(unittest.TestCase):
             self.assertGreaterEqual(len(ssh_caps), 1)
             payload = json.loads(ssh_caps[0]["payload"])
             self.assertEqual(payload["username"], "root")
-            self.assertEqual(payload["password"], "hunter2")
+            # Security (§2.11): Passwords stored as salted SHA256 hashes, never plaintext
+            self.assertTrue(payload.get("password_hash", "").startswith("sha256:"))
 
             # Verify REAL SQLite persistence (not the in-memory mirror)
             with sqlite3.connect(tmp_db) as conn:

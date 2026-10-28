@@ -28,12 +28,16 @@ from backend import _paths  # noqa: E402
 _paths.ensure_home_guard()
 
 from mcp_server.server import SentinelUnifiedServer
+import secrets
+import time
 from backend.mem_ipc import read_mem_state  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INDEX_PATH = os.path.join(HERE, "index.html")
 
 ENGINE: SentinelUnifiedServer = None  # set in main()
+SESSION_TOKEN = os.getenv("SENTINEL_DASHBOARD_TOKEN") or secrets.token_hex(24)
+FAILED_APPROVALS: dict[str, tuple[int, float]] = {}
 
 
 class SOCHandler(BaseHTTPRequestHandler):
@@ -49,16 +53,47 @@ class SOCHandler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(payload, default=str).encode("utf-8"))
 
     # ------------------------------------------------------------------
+    def _is_authenticated(self) -> bool:
+        tok = self.headers.get("X-Sentinel-Token")
+        if tok and secrets.compare_digest(tok, SESSION_TOKEN):
+            return True
+        if "?" in self.path:
+            import urllib.parse
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if qs.get("token") and secrets.compare_digest(qs["token"][0], SESSION_TOKEN):
+                return True
+        return False
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
-            with open(INDEX_PATH, "rb") as f:
-                self._send(200, f.read(), ctype="text/html")
+            with open(INDEX_PATH, "r", encoding="utf-8") as f:
+                html = f.read()
+            token_script = f"<script>window.SENTINEL_TOKEN = {json.dumps(SESSION_TOKEN)};</script>"
+            html = html.replace("<head>", f"<head>{token_script}", 1)
+            self._send(200, html.encode("utf-8"), ctype="text/html")
         elif self.path == "/api/state":
             self._json(self._state())
         else:
             self._json({"error": "not found"}, code=404)
 
     def do_POST(self):
+        client_ip = self.client_address[0] if self.client_address else "127.0.0.1"
+        is_loopback = client_ip in ("127.0.0.1", "::1", "localhost")
+
+        # Security (§2.1): Require valid session token on all mutating endpoints
+        if not self._is_authenticated():
+            if not (self.path == "/api/ingest_threat" and is_loopback):
+                self._json({"error": "unauthorized", "message": "Valid X-Sentinel-Token header required for mutating operations"}, code=401)
+                return
+
+        # Security (§2.1): Rate limit failed approvals
+        if self.path == "/api/approve":
+            now = time.time()
+            fails, last_fail = FAILED_APPROVALS.get(client_ip, (0, 0.0))
+            if fails >= 5 and (now - last_fail) < 60.0:
+                self._json({"error": "rate_limited", "message": "Too many failed approval attempts. Locked out for 60 seconds."}, code=429)
+                return
+
         length = int(self.headers.get("Content-Length", 0))
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -74,7 +109,13 @@ class SOCHandler(BaseHTTPRequestHandler):
             self._json(ENGINE.call_tool("deploy_honeypot", {}))
         elif self.path == "/api/approve":
             token = str(body.get("token", ""))
-            self._json(ENGINE.call_tool("approve_isolation", {"token": token, "analyst": body.get("analyst", "DASHBOARD_ANALYST")}))
+            res = ENGINE.call_tool("approve_isolation", {"token": token, "analyst": body.get("analyst", "DASHBOARD_ANALYST")})
+            if res.get("status") == "ERROR":
+                fails, _ = FAILED_APPROVALS.get(client_ip, (0, 0.0))
+                FAILED_APPROVALS[client_ip] = (fails + 1, time.time())
+            else:
+                FAILED_APPROVALS.pop(client_ip, None)
+            self._json(res)
         elif self.path == "/api/ingest_threat":
             # Bridge the Two Universes (D7): Inject terminal threats into the visual graph
             event = {
@@ -170,8 +211,14 @@ class SOCHandler(BaseHTTPRequestHandler):
                 pass
 
         # ---- pending HITL tokens: writer's SOAR queue ----
-        pending = mem.get("pending_tokens", []) if bridge_ok else [
+        raw_pending = mem.get("pending_tokens", []) if bridge_ok else [
             t for t in (ENGINE.soar.pending_tokens or {}).values()]
+        pending = []
+        for t in raw_pending:
+            item = dict(t) if isinstance(t, dict) else {"status": "AWAITING_HUMAN_APPROVAL"}
+            raw_tok = str(item.pop("token", ""))
+            item["token_masked"] = "AUTH-****..." + (raw_tok[-6:] if len(raw_tok) >= 6 else "")
+            pending.append(item)
 
         # ---- stage history (Fix 4) ----
         stage_history = mem.get("stage_history", []) if bridge_ok else list(
@@ -228,7 +275,7 @@ def main():
         pass
     global ENGINE
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default=os.getenv("SENTINEL_DASH_BIND", "0.0.0.0"))
+    ap.add_argument("--host", default=os.getenv("SENTINEL_DASH_BIND", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=8515)
     args = ap.parse_args()
 

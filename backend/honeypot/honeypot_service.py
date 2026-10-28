@@ -131,8 +131,16 @@ class HoneypotService:
         wfile.write(b"Password: ")
         wfile.flush()
         password = (rfile_reader(64) or b"").decode("utf-8", "replace").strip()
-        payload = json.dumps({"event": "ssh_auth_attempt", "username": username,
-                              "password": password if password else "(none)"})
+        import hashlib
+        salt = "sentinel_honeypot_salt_v3"
+        pw_hash = hashlib.sha256((salt + password).encode()).hexdigest()[:16] if password else "(none)"
+        # Security (§2.11): Store only salted hash + metadata, never plaintext password
+        payload = json.dumps({
+            "event": "ssh_auth_attempt",
+            "username": username,
+            "password_hash": f"sha256:{pw_hash}",
+            "password_length": len(password)
+        })
         self._persist_capture(source_ip, source_port, "ssh", payload)
         wfile.write(b"\r\nPermission denied\r\n\r\n")
         wfile.flush()

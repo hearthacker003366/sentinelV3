@@ -445,13 +445,20 @@ function toast(msg){
 
 
 async function api(path, body){
-
-  const opt = body ? {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)} : {};
-
+  const headers = {"Content-Type":"application/json"};
+  if (window.SENTINEL_TOKEN) {
+    headers["X-Sentinel-Token"] = window.SENTINEL_TOKEN;
+  }
+  const opt = body ? {method:"POST", headers, body: JSON.stringify(body)} : {headers};
   const r = await fetch(path, opt);
-
   return r.json();
+}
 
+function promptApprove(){
+  const tok = prompt("Enter 256-bit authorization token received on Telegram:");
+  if (tok && tok.trim()){
+    approveToken(tok.trim());
+  }
 }
 
 
@@ -903,15 +910,10 @@ function renderTokens(tokens){
   if (!tokens.length){ el.innerHTML = `<div class="empty">No pending Tier-2 tokens</div>`; return; }
 
   el.innerHTML = tokens.map(t => `
-
     <div class="token-card">
-
-      <div class="t-code">${esc(t.token)}</div>
-
-      <div class="t-meta">isolate <b style="color:#fff">${esc(t.host_id)}</b>  -  protect ${esc(t.predicted_target || " - ")}<br>${esc(t.reason || "")}</div>
-
-      <button class="danger" onclick="approveToken('${esc(t.token)}')"> -  APPROVE ISOLATION</button>
-
+      <div class="t-code">${esc(t.token_masked || "AWAITING TELEGRAM APPROVAL")}</div>
+      <div class="t-meta">isolate <b style="color:#fff">${esc(t.host_id)}</b> — protect ${esc(t.predicted_target || " — ")}<br>${esc(t.reason || "")}</div>
+      <button class="danger" onclick="promptApprove()">⚡ APPROVE ISOLATION</button>
     </div>`).join("");
 
 }
@@ -954,7 +956,7 @@ function renderHoneypot(hp, captures){
   const caps = (captures || []).slice(0, 6).map(c => {
     let pretty = c.payload;
     try { const j = JSON.parse(c.payload); pretty = j.event === "ssh_auth_attempt"
-        ? `SSH <b>${esc(j.username)} / ${esc(j.password)}</b> from ${esc(c.source_ip)}`
+        ? `SSH <b>${esc(j.username)} / [REDACTED_CREDENTIAL]</b> from ${esc(c.source_ip)}`
         : `HTTP <b>${esc(j.request_line)}</b> from ${esc(c.source_ip)}`; } catch(e){}
     return `<div class="capture">${esc((c.timestamp||"").slice(11,19))} ${pretty}</div>`;
   }).join("");

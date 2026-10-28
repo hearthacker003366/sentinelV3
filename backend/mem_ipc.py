@@ -109,12 +109,19 @@ def write_mem_state(engine, extra: dict = None) -> dict:
             pass
 
         # Pending Tier-2 HITL tokens live on the SOAR engine.
+        # Security (§2.2): Never broadcast raw tokens to client-readable snapshots.
         try:
             pend = getattr(engine.soar, "pending_tokens", {}) or {}
-            state["pending_tokens"] = [
-                dict(v) if isinstance(v, dict) else {"token": str(v), "status": "AWAITING_HUMAN_APPROVAL"}
-                for v in pend.values()
-            ]
+            masked_tokens = []
+            for v in pend.values():
+                if isinstance(v, dict):
+                    item = dict(v)
+                    raw_tok = str(item.pop("token", ""))
+                    item["token_masked"] = "AUTH-****..." + (raw_tok[-6:] if len(raw_tok) >= 6 else "")
+                    masked_tokens.append(item)
+                else:
+                    masked_tokens.append({"token_masked": "AUTH-****...", "status": "AWAITING_HUMAN_APPROVAL"})
+            state["pending_tokens"] = masked_tokens
         except Exception:
             pass
 

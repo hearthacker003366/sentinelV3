@@ -1,7 +1,7 @@
 """
 Sentinel Two-Tier SOAR Containment Engine
 Executes automated perimeter drops (Tier 1) and Human-in-the-Loop host quarantine (Tier 2).
-Maintains an immutable cryptographic audit log and dispatches real-time Telegram alerts.
+Maintains a structured audit trail and dispatches real-time Telegram alerts.
 """
 
 import uuid
@@ -21,8 +21,23 @@ class SOAREngine:
         self.pending_tokens: Dict[str, Dict[str, Any]] = {}
 
     def auto_block_ip(self, ip_address: str, reason: str = "Malicious C2 Communication") -> Dict[str, Any]:
-        if ip_address not in self.blocked_ips:
-            self.blocked_ips.append(ip_address)
+        import ipaddress
+        # Security (§2.3): Validate strictly as IPv4 or IPv6 before any write
+        try:
+            clean_ip = str(ipaddress.ip_address(str(ip_address).strip()))
+        except (ValueError, TypeError, AttributeError):
+            return {
+                "id": str(uuid.uuid4())[:8],
+                "tier": 1,
+                "action": "BLOCK_IP",
+                "target": str(ip_address),
+                "status": "REJECTED_INVALID_IP",
+                "error": f"Invalid IP address format: {ip_address!r}",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+
+        if clean_ip not in self.blocked_ips:
+            self.blocked_ips.append(clean_ip)
 
         # DRY-RUN HOOK: Generate actual firewall scripts to prove architectural capability
         try:
@@ -31,9 +46,9 @@ class SOAREngine:
             dry_run_log = os.path.join(here, "..", "..", "firewall_remediation_dry_run.sh")
             with open(dry_run_log, "a", encoding="utf-8") as fw:
                 fw.write(f"\n# [{datetime.now(timezone.utc).isoformat()}] Block C2 Node\n")
-                fw.write(f"iptables -A INPUT -s {ip_address} -j DROP\n")
-                fw.write(f"iptables -A OUTPUT -d {ip_address} -j DROP\n")
-                fw.write(f"netsh advfirewall firewall add rule name=\"Block_{ip_address}\" dir=in action=block remoteip={ip_address}\n")
+                fw.write(f"iptables -A INPUT -s {clean_ip} -j DROP\n")
+                fw.write(f"iptables -A OUTPUT -d {clean_ip} -j DROP\n")
+                fw.write(f"netsh advfirewall firewall add rule name=\"Block_{clean_ip}\" dir=in action=block remoteip={clean_ip}\n")
         except Exception:
             pass
 
@@ -41,7 +56,7 @@ class SOAREngine:
             "id": str(uuid.uuid4())[:8],
             "tier": 1,
             "action": "BLOCK_IP",
-            "target": ip_address,
+            "target": clean_ip,
             "status": "EXECUTED_AUTOMATICALLY (Dry-Run Logged)",
             "reason": reason,
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -49,8 +64,18 @@ class SOAREngine:
         self.audit_log.append(entry)
         return entry
 
+    def sweep_expired_tokens(self):
+        """Purge expired HITL tokens (§2.2)."""
+        now = datetime.now(timezone.utc).timestamp()
+        expired = [t for t, r in self.pending_tokens.items() if (now - r.get("created_at", now)) > 900]
+        for t in expired:
+            self.pending_tokens.pop(t, None)
+
     def generate_isolation_request(self, host_id: str, reason: str, predicted_target: str = "BACKUP-VAULT-01", confidence: float = 94.2) -> Dict[str, Any]:
-        token = f"AUTH-{uuid.uuid4().hex[:6].upper()}"
+        import secrets
+        self.sweep_expired_tokens()
+        # Security (§2.2): 256-bit cryptographically secure token
+        token = f"AUTH-{secrets.token_urlsafe(32)}"
         now_utc = datetime.now(timezone.utc)
         request = {
             "token": token,
@@ -60,7 +85,8 @@ class SOAREngine:
             "predicted_target": predicted_target,
             "timestamp": now_utc.isoformat(),
             "created_at": now_utc.timestamp(),
-            "status": "AWAITING_HUMAN_APPROVAL"
+            "status": "AWAITING_HUMAN_APPROVAL",
+            "attempts": 0
         }
         self.pending_tokens[token] = request
 
@@ -76,15 +102,24 @@ class SOAREngine:
         return request
 
     def approve_and_isolate_host(self, token: str, analyst_id: str = "ANALYST_PRABHUDAS") -> Dict[str, Any]:
-        if token not in self.pending_tokens:
+        self.sweep_expired_tokens()
+        if not token or token not in self.pending_tokens:
             return {"status": "ERROR", "message": "Invalid or expired authorization token."}
 
-        req = self.pending_tokens.pop(token)
+        req = self.pending_tokens[token]
+        # Security (§2.2): Attempt-count lockout after 3 failed attempts
+        req["attempts"] = req.get("attempts", 0) + 1
+        if req["attempts"] > 3:
+            self.pending_tokens.pop(token, None)
+            return {"status": "ERROR", "message": "Token revoked due to excessive failed verification attempts."}
 
         # Enforce single-use token TTL (15 minutes = 900 seconds)
         created_at = req.get("created_at")
         if created_at and (datetime.now(timezone.utc).timestamp() - created_at) > 900:
+            self.pending_tokens.pop(token, None)
             return {"status": "ERROR", "message": "Authorization token has expired (15-minute TTL enforced)."}
+
+        self.pending_tokens.pop(token, None)
         host_id = req["host_id"]
         predicted_target = req.get("predicted_target", "BACKUP-VAULT-01")
 
