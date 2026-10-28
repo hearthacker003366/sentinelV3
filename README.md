@@ -102,7 +102,14 @@ Laya is the fine-tuned triage model behind the System-1 gate. Training proof scr
 
 ![Laya GPU training proof, part 2](docs/assets/laya_gpu_training_proof_part2.png)
 
-Held-out evaluation (`evaluate.py` base-vs-tuned on the 105 held-out rows + `EVAL.md`) is the outstanding step — no benchmark numbers are claimed until it exists.
+Held-out evaluation ([EVAL.md](EVAL.md), tested on 101 held-out rows with zero training template overlap):
+- **Verdict Accuracy:** 88.12% (+18.81% absolute gain over foundation baseline 69.31%)
+- **Autonomous Auto-Act Rate (>= 0.85):** 83.17% (2.6x increase over baseline 31.68% at 91.67% accuracy)
+- **Cognitive Alert Fatigue Reduction:** Reduces high-tier escalations from 68.32% down to **16.83%**
+- **Severity Prediction MAE:** 0.1262 (47.1% error reduction over baseline 0.2388)
+- **Execution Latency:** 54 ms mean / 51 ms median (steady-state sub-55ms fast triage)
+
+See complete empirical metrics breakdown in [EVAL.md](EVAL.md).
 
 ## ⚠️ Disclaimer
 Demo / educational proof of concept. Simulated lab network only. Not a production SOC, not a weapon — every offensive capability in the simulator is paired with its detection telemetry and remediation.
