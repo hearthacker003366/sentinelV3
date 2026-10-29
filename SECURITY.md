@@ -14,7 +14,7 @@ Active security hardening and bug fixes are maintained on the current developmen
 ## Reporting a Vulnerability
 We welcome responsible vulnerability reports. If you discover a security vulnerability in the orchestrator, MCP server, API endpoints, or containment mechanisms:
 
-1. **Email Disclosure**: Contact the project maintainer directly at **security@project-sentinel.local** or open a **GitHub Security Advisory** under the `Security` tab.
+1. **Email Disclosure**: Contact the project maintainer directly at **boorgulaprabhudas@gmail.com** or open a **GitHub Security Advisory** under the `Security` tab.
 2. **Details to Include**:
    - Description of the vulnerability and attack vector.
    - Proof of Concept (PoC) or reproducible steps.
