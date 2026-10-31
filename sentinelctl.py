@@ -47,7 +47,8 @@ def start():
         except Exception:
             pass
 
-    print("[*] Starting Sentinel Unified Dashboard Server on 0.0.0.0:8515...")
+    print("[*] Starting Sentinel Unified Dashboard Server...")
+    print("    -> Access on VM & Host at: http://127.0.0.1:8515 or http://localhost:8515")
     server_proc = subprocess.Popen([sys.executable, "dashboard/server.py", "--host", "0.0.0.0", "--port", "8515"])
     
     print("[*] Starting Sentinel Terminal Watcher Daemon...")
