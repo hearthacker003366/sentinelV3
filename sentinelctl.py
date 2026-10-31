@@ -38,8 +38,17 @@ def start():
     print("[*] Checking port 8515 hygiene...")
     kill_port(8515)
     
-    print("[*] Starting Sentinel Unified Dashboard Server...")
-    server_proc = subprocess.Popen([sys.executable, "dashboard/server.py"])
+    # Clean stale mem_state so dashboard starts fresh
+    mem_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", "mem_state.json")
+    if os.path.exists(mem_path):
+        try:
+            os.remove(mem_path)
+            print("[*] Cleaned stale mem_state.json.")
+        except Exception:
+            pass
+
+    print("[*] Starting Sentinel Unified Dashboard Server on 0.0.0.0:8515...")
+    server_proc = subprocess.Popen([sys.executable, "dashboard/server.py", "--host", "0.0.0.0", "--port", "8515"])
     
     print("[*] Starting Sentinel Terminal Watcher Daemon...")
     watcher_proc = subprocess.Popen([sys.executable, "backend/watcher.py"])

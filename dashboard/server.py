@@ -30,7 +30,7 @@ _paths.ensure_home_guard()
 from mcp_server.server import SentinelUnifiedServer
 import secrets
 import time
-from backend.mem_ipc import read_mem_state  # noqa: E402
+from backend.mem_ipc import read_mem_state, write_mem_state  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INDEX_PATH = os.path.join(HERE, "index.html")
@@ -151,6 +151,14 @@ class SOCHandler(BaseHTTPRequestHandler):
                         for idx, hop in enumerate(laya_path)
                     ]
 
+                target_host = "host:WKSTN-04"
+                if target_host in ENGINE.graph.nx_graph:
+                    ENGINE.graph.nx_graph.nodes[target_host]["status"] = "COMPROMISED"
+                try:
+                    write_mem_state(ENGINE)
+                except Exception:
+                    pass
+
                 self._json({"status": "ingested_to_graph", "laya_action": "dispatched", "latency_ms": laya_lat})
             except Exception as e:
                 self._json({"error": str(e)}, code=500)
@@ -166,7 +174,8 @@ class SOCHandler(BaseHTTPRequestHandler):
         # local engine values only when the bridge is unavailable/stale, so the
         # UI still works if the MCP server is down.
         mem = read_mem_state()
-        bridge_ok = bool(mem.get("_available")) and not mem.get("_stale")
+        writer_alive = bool(mem.get("_writer_alive"))
+        bridge_ok = bool(mem.get("_available")) and not mem.get("_stale") and (writer_alive or not getattr(ENGINE, "last_alerts", None))
 
         graph = ENGINE.call_tool("get_threat_graph", {})
         threats = ENGINE.call_tool("query_threats", {})

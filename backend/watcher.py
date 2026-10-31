@@ -5,6 +5,12 @@ import datetime
 import re
 from collections import defaultdict
 
+# Path seatbelt - ensure project root is in sys.path
+import sys
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "sentinel.db")
 LOG_PATH = os.path.join(BASE_DIR, "demo_auth.log")
