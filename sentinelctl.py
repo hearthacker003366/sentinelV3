@@ -34,11 +34,41 @@ def kill_port(port):
         except Exception:
             pass
 
+def clean_session():
+    """Reset ephemeral session telemetry on fresh boot while preserving RL and audit state."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    mem_path = os.path.join(base_dir, "backend", "mem_state.json")
+    if os.path.exists(mem_path):
+        try:
+            os.remove(mem_path)
+            print("[*] Cleaned stale mem_state.json.")
+        except Exception:
+            pass
+    log_path = os.path.join(base_dir, "backend", "demo_auth.log")
+    try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.truncate(0)
+        print("[*] Reset demo_auth.log to clean 0-byte stream.")
+    except Exception:
+        pass
+    db_path = os.path.join(base_dir, "backend", "sentinel.db")
+    if os.path.exists(db_path):
+        try:
+            import sqlite3
+            with sqlite3.connect(db_path, timeout=10.0) as conn:
+                conn.execute("DELETE FROM threats;")
+                conn.execute("DELETE FROM laya_triage_log;")
+                conn.commit()
+            print("[*] Cleared previous threat session tables (RL score & SOAR audit preserved).")
+        except Exception as e:
+            print(f"[!] Warning cleaning db session: {e}")
+
 def start():
     print("[*] Checking port 8515 hygiene...")
     kill_port(8515)
     
-    # Clean stale mem_state so dashboard starts fresh
+    # Clean stale session telemetry so dashboard starts fresh
+    clean_session()
     mem_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", "mem_state.json")
     if os.path.exists(mem_path):
         try:
@@ -85,13 +115,16 @@ def status():
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: sentinelctl.py start|status")
+        print("Usage: sentinelctl.py start|status|reset")
         sys.exit(1)
         
     cmd = sys.argv[1].lower()
     if cmd == "start":
         start()
     elif cmd == "status":
+        status()
+    elif cmd == "reset":
+        clean_session()
         status()
     else:
         print(f"Unknown command: {cmd}")
