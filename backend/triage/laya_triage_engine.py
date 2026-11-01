@@ -165,19 +165,19 @@ class LayaTriageEngine:
         t_upper = (threat_type or "").upper()
 
         if "SSH" in t_upper or "BRUTE" in t_upper:
-            return [source, "lab-win10-03 (192.168.56.31)", "lab-dc-01 (192.168.56.10)"]
+            return ["WKSTN-04", "FILE-SRV", "DC01-PROD"]
         elif "PORT_SCAN" in t_upper or "NMAP" in t_upper or "UFW" in t_upper:
-            return [source, "perimeter-gateway (192.168.56.1)", "honeypot-ssh-2222"]
+            return ["WKSTN-04", "perimeter-gateway", "honeypot-ssh-2222"]
         elif "SUDO" in t_upper or "PRIVILEGE" in t_upper:
-            return ["lab-win10-03", "NT AUTHORITY\\SYSTEM", "lsass.exe (Credential Dump)"]
+            return ["WKSTN-04", "DC01-PROD", "BACKUP-VAULT-01"]
         elif "SQL" in t_upper or "WEB" in t_upper:
-            return [source, "web-dmz-01 (10.10.10.15)", "backend-db-cluster (10.10.10.21)"]
+            return ["WKSTN-04", "FILE-SRV", "DC01-PROD"]
         elif "DDOS" in t_upper or "SLOWLORIS" in t_upper:
-            return [source, "reverse-proxy (port 80)", "egress-rate-limiter"]
+            return ["WKSTN-04", "FILE-SRV", "DC01-PROD"]
         else:
             if severity > 0.7:
-                return [source, "lab-workstation-01", "lab-domain-controller"]
-            return [source, "perimeter-sentinel"]
+                return ["WKSTN-04", "DC01-PROD", "BACKUP-VAULT-01"]
+            return ["WKSTN-04", "FILE-SRV"]
 
     def triage_event(self, event_text: str, ip: Optional[str] = None, threat_type: str = "GENERIC_ALERT") -> LayaTriageResult:
         """Triages a security event in sub-50ms using Laya System-1."""

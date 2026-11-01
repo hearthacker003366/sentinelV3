@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sentinel V3 SOC Web Dashboard
 =============================
 Zero-dependency (stdlib-only) HTTP server that serves the SOC dashboard and a
@@ -151,7 +151,12 @@ class SOCHandler(BaseHTTPRequestHandler):
                         for idx, hop in enumerate(laya_path)
                     ]
 
-                target_host = "host:WKSTN-04"
+                target_host = "HOST:WKSTN-04"
+                if target_host in ENGINE.graph.nx_graph:
+                    ENGINE.graph.nx_graph.nodes[target_host]["status"] = "COMPROMISED"
+                for idx, pt in enumerate(["HOST:FILE-SRV", "HOST:DC01-PROD"]):
+                    if pt in ENGINE.graph.nx_graph:
+                        ENGINE.graph.mark_predicted_path(target_host, pt, round(max(0.95 - idx * 0.12, 0.45), 2))
                 if target_host in ENGINE.graph.nx_graph:
                     ENGINE.graph.nx_graph.nodes[target_host]["status"] = "COMPROMISED"
                 try:
