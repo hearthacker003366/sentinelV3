@@ -19,6 +19,7 @@ import os
 import sys
 import json
 import argparse
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -143,13 +144,29 @@ class SOCHandler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        client_ip = self.client_address[0] if self.client_address else "127.0.0.1"
+        is_loopback = client_ip in ("127.0.0.1", "::1", "localhost")
+
+        # Security (§2.1): reads get the same gate as writes. The dashboard
+        # page embeds the session token for the UI, and /api/state exposes the
+        # full SOC state — neither is served to a non-loopback client that has
+        # not presented the token first. Loopback behaviour is unchanged, so
+        # local use (the default 127.0.0.1 bind) works exactly as before.
+        # A remote operator authenticates once via /?token=<TOKEN> (or the
+        # X-Sentinel-Token header); the served page then carries the token
+        # for the UI's own fetches, as it does today.
+        if not is_loopback and not self._is_authenticated():
+            self._json({"error": "unauthorized", "message": "Valid X-Sentinel-Token header required"}, code=401)
+            return
+
+        route = urllib.parse.urlparse(self.path).path
+        if route in ("/", "/index.html"):
             with open(INDEX_PATH, "r", encoding="utf-8") as f:
                 html = f.read()
             token_script = f"<script>window.SENTINEL_TOKEN = {json.dumps(SESSION_TOKEN)};</script>"
             html = html.replace("<head>", f"<head>{token_script}", 1)
             self._send(200, html.encode("utf-8"), ctype="text/html")
-        elif self.path == "/api/state":
+        elif route == "/api/state":
             self._json(self._state())
         else:
             self._json({"error": "not found"}, code=404)
