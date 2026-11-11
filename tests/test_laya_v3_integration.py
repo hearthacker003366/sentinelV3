@@ -80,3 +80,101 @@ def test_dispatch_wakes_hermes_and_logs(triage_engine, tmp_path):
         assert rows[0][0] == "192.168.56.31"
         assert rows[0][2] == "WAKE_HERMES"
         assert rows[0][3] == result.verdict
+def test_laya_gpu_bridge_used_when_local_weights_missing(tmp_path):
+    """Verifies HTTP GPU bridge serves real Laya inference when local weights are absent."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            _ = self.rfile.read(length)
+            body = json.dumps({
+                "verdict": "malicious",
+                "confidence": 0.9412,
+                "is_attack": True,
+                "severity": 0.88,
+                "latency_ms": 14.2,
+                "source": "LAYA-421M-GPU",
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), StubHandler)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        test_db = str(tmp_path / "bridge_test.db")
+        engine = LayaTriageEngine(
+            checkpoint_dir=str(tmp_path / "missing_ckpt"),
+            db_path=test_db,
+            dashboard_url="http://127.0.0.1:9999",
+            laya_url=f"http://127.0.0.1:{port}",
+        )
+        res = engine.triage_event("Failed password for root", ip="192.168.56.20", threat_type="BRUTE_FORCE_SSH")
+        assert res.source == "LAYA-GPU-BRIDGE"
+        assert res.verdict == "malicious"
+        assert res.confidence == 0.9412
+        assert res.is_attack is True
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_laya_fallback_reports_honest_source(tmp_path):
+    """When neither local checkpoint nor GPU bridge is available, source is explicitly HEURISTIC-FALLBACK."""
+    test_db = str(tmp_path / "fallback_test.db")
+    engine = LayaTriageEngine(
+        checkpoint_dir=str(tmp_path / "missing_ckpt"),
+        db_path=test_db,
+        dashboard_url="http://127.0.0.1:9999",
+        laya_url="",
+    )
+    res = engine.triage_event("Failed password for root", ip="192.168.56.20", threat_type="BRUTE_FORCE_SSH")
+    assert res.source == "HEURISTIC-FALLBACK"
+
+
+def test_dashboard_ingest_computes_real_gnn_predictions():
+    """Ingesting a live threat on dashboard must run GraphSAGE predict_next_hop instead of hardcoded strings."""
+    import tempfile
+    import uuid
+    from unittest.mock import patch
+
+    tmp_db = os.path.join(tempfile.gettempdir(), f"dash_gnn_{uuid.uuid4().hex[:8]}.db")
+    try:
+        with patch.dict(os.environ, {"SENTINEL_DB_PATH": tmp_db}):
+            from mcp_server.server import SentinelUnifiedServer
+            from dashboard.server import apply_ingested_threat
+
+            eng = SentinelUnifiedServer()
+            out = apply_ingested_threat(eng, {
+                "ip": "192.168.56.20",
+                "type": "BRUTE_FORCE_SSH",
+                "details": "5+ failed SSH logins detected",
+                "laya_verdict": "malicious",
+                "laya_confidence": 0.94,
+                "laya_latency_ms": 18.5,
+                "laya_source": "LAYA-GPU-BRIDGE",
+            })
+            assert out["status"] == "ingested_to_graph"
+            assert len(eng.last_predictions) > 0
+            assert eng.last_predictions[0]["mode"] in ("GNN-TORCH", "HEURISTIC-FALLBACK")
+            assert "distance" in eng.last_predictions[0]
+            predicted_edges = [
+                (u, v, d) for u, v, d in eng.graph.nx_graph.edges(data=True)
+                if (d.get("type") or d.get("relationship")) == "PREDICTED_ATTACK_PATH"
+            ]
+            assert len(predicted_edges) >= 1
+    finally:
+        if os.path.exists(tmp_db):
+            try:
+                os.remove(tmp_db)
+            except OSError:
+                pass

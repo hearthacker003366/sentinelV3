@@ -78,6 +78,7 @@ class LayaTriageResult:
     predicted_path: List[str]
     latency_ms: float
     action: str  # "AUTO_FILE", "WAKE_HERMES"
+    source: str = "HEURISTIC-FALLBACK"
     details: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -85,10 +86,26 @@ class LayaTriageEngine:
     """Real-time System-1 Triage & Dispatcher for Sentinel V3."""
 
     def __init__(self, checkpoint_dir: Optional[str] = None, db_path: Optional[str] = None,
-                 dashboard_url: str = "http://127.0.0.1:8515"):
+                 dashboard_url: str = "http://127.0.0.1:8515", laya_url: Optional[str] = None):
         self.db_path = db_path or _paths.db_path()
         self.dashboard_url = dashboard_url.rstrip("/")
         self.checkpoint_dir = checkpoint_dir
+        self.laya_url = laya_url
+        if laya_url is not None:
+            self._laya_urls = [laya_url.strip().rstrip("/")] if laya_url.strip() else []
+        else:
+            env_url = os.getenv("SENTINEL_LAYA_URL")
+            if env_url is not None:
+                self._laya_urls = [env_url.strip().rstrip("/")] if env_url.strip() else []
+            else:
+                self._laya_urls = ["http://127.0.0.1:8517"]
+                if not sys.platform.startswith("win"):
+                    self._laya_urls.append("http://10.0.2.2:8517")
+        self._bridge_retry_after = 0.0
+        self._local_source = "LAYA-421M-LOCAL"
+        self._gnn_graph = None
+        self._gnn_predictor = None
+        self._gnn_norm = None
         self.agent = None
         self._init_laya_model()
         self._ensure_db_schema()
@@ -109,6 +126,7 @@ class LayaTriageEngine:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 self.agent = laya.load(valid_path, device=device)
                 self.checkpoint_dir = valid_path
+                self._local_source = "LAYA-421M-GPU" if device == "cuda" else "LAYA-421M-CPU"
                 # Proactive CUDA warm-up during daemon boot so runtime requests achieve sub-50ms latency
                 try:
                     self.agent.system_one({"event": "warmup"}, QUESTIONS)
@@ -159,29 +177,135 @@ class LayaTriageEngine:
         except Exception:
             pass
 
+    def _ensure_gnn_ready(self):
+        """Lazily initialize standing Cyber Knowledge Graph and GraphSAGE predictor."""
+        if self._gnn_predictor is not None:
+            return
+        from backend.graph.graph_manager import GraphManager
+        from backend.gnn.predictor import PathPredictor
+        from backend.ingestion.log_normalizer import LogNormalizer
+        from simulator.ransomware_simulator import RansomwareSimulator
+
+        self._gnn_graph = GraphManager()
+        self._gnn_norm = LogNormalizer()
+        sim = RansomwareSimulator(target_host="WKSTN-04")
+        for raw in sim.get_baseline_network_topology():
+            self._gnn_graph.ingest_normalized_event(self._gnn_norm.normalize(raw))
+        self._gnn_predictor = PathPredictor(self._gnn_graph)
+        self._gnn_predictor.train_on_topology(epochs=15)
+
     def predict_lateral_path(self, ip: Optional[str], threat_type: str, severity: float) -> List[str]:
-        """Predicts the adversary's lateral movement trajectory based on kill-chain telemetry."""
+        """Forecast adversary lateral trajectory using live GraphSAGE link prediction."""
+        self._ensure_gnn_ready()
         source = ip or "192.168.56.20"
         t_upper = (threat_type or "").upper()
+        is_scan = any(tok in t_upper for tok in ("PORT_SCAN", "NMAP", "UFW", "PROBE"))
 
-        if "SSH" in t_upper or "BRUTE" in t_upper:
-            return ["WKSTN-04", "FILE-SRV", "DC01-PROD"]
-        elif "PORT_SCAN" in t_upper or "NMAP" in t_upper or "UFW" in t_upper:
-            return ["WKSTN-04", "perimeter-gateway", "honeypot-ssh-2222"]
-        elif "SUDO" in t_upper or "PRIVILEGE" in t_upper:
-            return ["WKSTN-04", "DC01-PROD", "BACKUP-VAULT-01"]
-        elif "SQL" in t_upper or "WEB" in t_upper:
-            return ["WKSTN-04", "FILE-SRV", "DC01-PROD"]
-        elif "DDOS" in t_upper or "SLOWLORIS" in t_upper:
-            return ["WKSTN-04", "FILE-SRV", "DC01-PROD"]
-        else:
-            if severity > 0.7:
-                return ["WKSTN-04", "DC01-PROD", "BACKUP-VAULT-01"]
-            return ["WKSTN-04", "FILE-SRV"]
+        ev = self._gnn_norm.normalize({
+            "event_id": 3,
+            "Computer": "WKSTN-04",
+            "user": "SYSTEM",
+            "SourceIp": source,
+            "DestinationIp": "10.0.254.222" if is_scan else "192.168.1.50",
+            "DestinationPort": 2222 if is_scan else 445,
+            "Protocol": "tcp",
+        })
+        self._gnn_graph.ingest_normalized_event(ev)
+
+        if is_scan:
+            decoy_ev = self._gnn_norm.normalize({
+                "event_id": 3,
+                "Computer": "HONEYPOT-SSH-2222",
+                "user": "SYSTEM",
+                "SourceIp": "10.0.254.222",
+                "DestinationIp": "10.0.254.1",
+                "DestinationPort": 2222,
+                "Protocol": "tcp",
+            })
+            self._gnn_graph.ingest_normalized_event(decoy_ev)
+
+        self._gnn_graph.mark_node_compromised(
+            "HOST:WKSTN-04",
+            severity="CRITICAL" if severity >= 0.7 else "HIGH",
+            reason=f"Laya triage: {threat_type}",
+        )
+        self._gnn_predictor.train_on_topology(epochs=10)
+        preds = self._gnn_predictor.predict_next_hop("HOST:WKSTN-04")
+        reachable = [p for p in preds if p.get("distance") is not None] or preds
+
+        if is_scan:
+            decoy_hops = [
+                p["target_name"] for p in reachable
+                if any(tag in p["target_name"].upper() for tag in ("HONEYPOT", "GATEWAY"))
+            ]
+            other_hops = [p["target_name"] for p in reachable if p["target_name"] not in decoy_hops]
+            return ["WKSTN-04"] + (decoy_hops[:1] or ["HONEYPOT-SSH-2222"]) + (other_hops[:1] or ["PERIMETER-GATEWAY"])
+
+        ranked = sorted(
+            reachable,
+            key=lambda p: (
+                -(1 if (p.get("is_critical") or "FILE" in p.get("target_name", "")) else 0),
+                p.get("distance") if p.get("distance") is not None else 99,
+                -p.get("probability", 0.0),
+            ),
+        )
+        hops = [p["target_name"] for p in ranked[:3]]
+        return ["WKSTN-04"] + (hops if hops else ["FILE-SRV", "DC01-PROD"])
+
+    def _remote_gpu_triage(self, event_text: str, ip: Optional[str], threat_type: str) -> Optional[Dict[str, Any]]:
+        """Query host-bridged Laya GPU server (Windows RTX 4050) when local weights are absent."""
+        if not self._laya_urls:
+            return None
+        explicit_url = self.laya_url is not None and self.laya_url.strip() != ""
+        if not explicit_url and time.time() < self._bridge_retry_after:
+            return None
+
+        payload = json.dumps({
+            "event": event_text,
+            "ip": ip,
+            "threat_type": threat_type,
+        }).encode("utf-8")
+
+        for base_url in self._laya_urls:
+            if not explicit_url:
+                try:
+                    with urllib.request.urlopen(f"{base_url}/health", timeout=0.2) as hresp:
+                        if hresp.status != 200:
+                            continue
+                except Exception:
+                    continue
+            try:
+                req = urllib.request.Request(
+                    f"{base_url}/triage",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=1.5) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if "verdict" not in data:
+                        continue
+                    remote_src = str(data.get("source", ""))
+                    return {
+                        "verdict": str(data.get("verdict", "suspicious")),
+                        "confidence": float(data.get("confidence", 0.85)),
+                        "is_attack": bool(data.get("is_attack", True)),
+                        "severity": float(data.get("severity", 0.5)),
+                        "source": "HEURISTIC-FALLBACK" if remote_src == "HEURISTIC-FALLBACK" else "LAYA-GPU-BRIDGE",
+                        "bridge_url": base_url,
+                    }
+            except Exception:
+                continue
+
+        if not explicit_url:
+            self._bridge_retry_after = time.time() + 10.0
+        return None
 
     def triage_event(self, event_text: str, ip: Optional[str] = None, threat_type: str = "GENERIC_ALERT") -> LayaTriageResult:
-        """Triages a security event in sub-50ms using Laya System-1."""
+        """Triages a security event in sub-50ms using Laya System-1 (local GPU, HTTP bridge, or honest fallback)."""
         t0 = time.perf_counter()
+        source = "HEURISTIC-FALLBACK"
 
         if self.agent is not None:
             try:
@@ -195,10 +319,19 @@ class LayaTriageEngine:
                 is_attack = is_attack_val >= 0.5
                 sev_score = float(ans.get("severity", {}).get("score", 2.0))
                 severity = round(sev_score / 4.0, 4)
+                source = self._local_source
             except Exception:
                 verdict, confidence, is_attack, severity = self._fallback_triage(event_text, threat_type)
         else:
-            verdict, confidence, is_attack, severity = self._fallback_triage(event_text, threat_type)
+            remote = self._remote_gpu_triage(event_text, ip, threat_type)
+            if remote is not None:
+                verdict = remote["verdict"]
+                confidence = remote["confidence"]
+                is_attack = remote["is_attack"]
+                severity = remote["severity"]
+                source = remote["source"]
+            else:
+                verdict, confidence, is_attack, severity = self._fallback_triage(event_text, threat_type)
 
         latency_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         predicted_path = self.predict_lateral_path(ip, threat_type, severity)
@@ -218,7 +351,8 @@ class LayaTriageEngine:
             predicted_path=predicted_path,
             latency_ms=latency_ms,
             action=action,
-            details={"threat_type": threat_type, "source_ip": ip, "raw_event": event_text[:120]}
+            source=source,
+            details={"threat_type": threat_type, "source_ip": ip, "source": source, "raw_event": event_text[:120]}
         )
 
         self._record_triage(result, event_text, ip)
@@ -289,6 +423,7 @@ class LayaTriageEngine:
                 "laya_confidence": triage_result.confidence,
                 "laya_path": triage_result.predicted_path,
                 "laya_latency_ms": triage_result.latency_ms,
+                "laya_source": triage_result.source,
                 "timestamp": datetime.now(timezone.utc).isoformat() + "Z"
             }).encode('utf-8')
             req = urllib.request.Request(

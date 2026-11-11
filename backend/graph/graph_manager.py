@@ -137,6 +137,16 @@ class GraphManager:
 
             elif ev_type == "NETWORK_CONNECTION":
                 net = event.get("network", {})
+                src_ip = net.get("src_ip")
+                if src_ip:
+                    src_ip_id = GraphSchema.make_ip_id(src_ip)
+                    mutations.append(self.add_node(src_ip_id, GraphSchema.LABEL_IP, {
+                        "ip": src_ip,
+                        "is_internal": src_ip.startswith("192.168.") or src_ip.startswith("10.")
+                    }))
+                    mutations.append(self.add_edge(src_ip_id, host_id, GraphSchema.RESOLVES_TO, {
+                        "timestamp": event.get("timestamp")
+                    }))
                 dest_ip = net.get("dest_ip")
                 dest_port = net.get("dest_port")
                 if dest_ip:

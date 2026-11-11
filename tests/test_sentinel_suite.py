@@ -373,5 +373,36 @@ class SentinelTestSuite(unittest.TestCase):
         self.assertNotIn(token, self.soar.pending_tokens)
 
 
+    def test_19_approve_isolation_real_token_updates_rl_and_graph(self):
+        """Approving a real issued AUTH- token via MCP call_tool must update RL and graph without AttributeError."""
+        tmp_db = os.path.join(tempfile.gettempdir(), f"mcp_approve_{uuid.uuid4().hex[:8]}.db")
+        try:
+            with patch.dict(os.environ, {"SENTINEL_DB_PATH": tmp_db}):
+                server = SentinelUnifiedServer()
+                server.call_tool("simulate_apt_scenario", {"stage": 2})
+                req = server.call_tool(
+                    "request_host_isolation",
+                    {"host_id": "HOST:WKSTN-04", "reason": "Stage-2 critical test"},
+                )
+                self.assertIn("token", req)
+                res = server.call_tool(
+                    "approve_isolation",
+                    {"token": req["token"], "analyst": "SOC-LEAD"},
+                )
+                self.assertEqual(res.get("status"), "APPROVED_AND_ISOLATED")
+                self.assertIn("rl", res)
+                self.assertIn("reward_delta", res["rl"])
+                self.assertEqual(
+                    server.graph.nx_graph.nodes["HOST:WKSTN-04"]["status"],
+                    "ISOLATED",
+                )
+        finally:
+            if os.path.exists(tmp_db):
+                try:
+                    os.remove(tmp_db)
+                except OSError:
+                    pass
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

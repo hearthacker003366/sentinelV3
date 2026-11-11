@@ -6,7 +6,7 @@ ONE long-lived daemon that reunifies BOTH generations of the project:
   Generation A (V1/V2 "APT & GNN" brain):   graph, sigma, GNN, SOAR, RL, Hermes
   Generation B (V2.5 "Active Defense" kit): threat DB, intel, honeypot, reports
 
-...exposed together as 16 stateful MCP tools over stdio JSON-RPC 2.0.
+...exposed together as 18 stateful MCP tools over stdio JSON-RPC 2.0.
 
 Statefulness:
   The daemon holds one persistent in-memory brain (graph, SOAR, RL, Hermes)
@@ -71,7 +71,7 @@ PROTOCOL_VERSION = "2024-11-05"
 
 
 class SentinelUnifiedServer:
-    """Stateful MCP server: one brain, 16 tools, SQLite-backed persistence."""
+    """Stateful MCP server: one brain, 18 tools, SQLite-backed persistence."""
 
     def __init__(self):
         # ---- The Brain (long-lived in-memory state) ----
@@ -201,7 +201,7 @@ class SentinelUnifiedServer:
         return {"error": {"code": -32601, "message": f"Method not found: {method}"}}
 
     # ================================================================= #
-    # Tool registry (16 tools)
+    # Tool registry (18 tools)
     # ================================================================= #
     def tool_definitions(self) -> List[Dict[str, Any]]:
         def schema(props: Dict[str, Any], required: List[str] = None) -> Dict[str, Any]:
@@ -497,8 +497,8 @@ class SentinelUnifiedServer:
             current_stage = self.stage_history[-1] if self.stage_history else 1
             real_state = [
                 float(current_stage) / 5.0,
-                float(len(self.matched_alerts)) / 10.0,
-                1.0 if any(a.get("severity") in ("CRITICAL", "HIGH") for a in self.matched_alerts) else 0.0,
+                float(len(self.last_alerts)) / 10.0,
+                1.0 if any((a.get("level") or a.get("severity")) in ("CRITICAL", "HIGH") for a in self.last_alerts) else 0.0,
                 1.0 if latency < 2.5 else 0.0,
             ] + [0.0] * 12
             rl_entry = self.rl.evaluate_defense_action(

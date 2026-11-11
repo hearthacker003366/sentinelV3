@@ -60,6 +60,9 @@ class RansomwareSimulator:
             (self.target_host, WKSTN04_IP, "WKSTN-12", INTERNAL_HOSTS["WKSTN-12"]),
             ("FILE-SRV", INTERNAL_HOSTS["FILE-SRV"], "DC01-PROD", INTERNAL_HOSTS["DC01-PROD"]),
             ("DC01-PROD", INTERNAL_HOSTS["DC01-PROD"], "BACKUP-VAULT-01", INTERNAL_HOSTS["BACKUP-VAULT-01"]),
+            ("BACKUP-VAULT-01", INTERNAL_HOSTS["BACKUP-VAULT-01"], "DC01-PROD", INTERNAL_HOSTS["DC01-PROD"]),
+            ("WKSTN-09", INTERNAL_HOSTS["WKSTN-09"], "FILE-SRV", INTERNAL_HOSTS["FILE-SRV"]),
+            ("WKSTN-12", INTERNAL_HOSTS["WKSTN-12"], "FILE-SRV", INTERNAL_HOSTS["FILE-SRV"]),
         ]
         for src_host, src_ip, dst_host, dst_ip in topology_edges:
             events.append({

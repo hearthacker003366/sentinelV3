@@ -40,6 +40,84 @@ SESSION_TOKEN = os.getenv("SENTINEL_DASHBOARD_TOKEN") or secrets.token_hex(24)
 FAILED_APPROVALS: dict[str, tuple[int, float]] = {}
 
 
+def apply_ingested_threat(engine: SentinelUnifiedServer, body: dict) -> dict:
+    """Ingest live watcher/Laya threat into the Knowledge Graph and compute genuine GraphSAGE predictions."""
+    target_host_name = str(body.get("host") or "WKSTN-04").upper()
+    event = {
+        "event_type": "NETWORK_CONNECTION",
+        "host": target_host_name,
+        "network": {
+            "src_ip": body.get("ip", "0.0.0.0"),
+            "dest_ip": "192.168.1.50",
+            "dest_port": int(body.get("port", 22) or 22),
+        },
+        "timestamp": body.get("timestamp", ""),
+        "description": body.get("details", ""),
+    }
+    engine.graph.ingest_normalized_event(event)
+    laya_v = body.get("laya_verdict", "malicious")
+    laya_conf = float(body.get("laya_confidence", 0.95))
+    laya_lat = float(body.get("laya_latency_ms", 12.0))
+    laya_source = str(body.get("laya_source", "LAYA-SYSTEM-1"))
+    threat_type = str(body.get("type", "ATTACK"))
+
+    engine.last_alerts.append({
+        "rule_id": "LAYA_TRIAGE",
+        "title": f"Laya System-1 ({laya_source}): {threat_type} ({str(laya_v).upper()} {laya_conf * 100:.1f}% in {laya_lat}ms)",
+        "level": "CRITICAL" if str(laya_v).lower() == "malicious" else "HIGH",
+        "host": target_host_name,
+        "timestamp": event["timestamp"],
+        "source": laya_source,
+    })
+    engine.last_laya_telemetry = {
+        "system1_model": f"Laya 421M ({laya_source})",
+        "median_latency_ms": round(laya_lat, 2),
+        "last_latency_ms": round(laya_lat, 2),
+        "last_verdict": str(laya_v),
+        "last_confidence": round(laya_conf, 4),
+        "source": laya_source,
+        "status": "ONLINE",
+    }
+
+    target_host = f"HOST:{target_host_name}"
+    if target_host not in engine.graph.nx_graph:
+        target_host = "HOST:WKSTN-04"
+    if target_host in engine.graph.nx_graph:
+        engine.graph.mark_node_compromised(
+            target_host,
+            severity="CRITICAL",
+            reason=f"Laya System-1 ({threat_type})",
+        )
+
+    engine.gnn.train_on_topology(epochs=15)
+    preds = engine.gnn.predict_next_hop(target_host)
+    engine.last_predictions = preds
+
+    marked = 0
+    for pred in preds[:2]:
+        if pred.get("distance") is not None:
+            engine.graph.mark_predicted_path(target_host, pred["target"], pred["probability"])
+            marked += 1
+    if marked == 0 and preds:
+        engine.graph.mark_predicted_path(target_host, preds[0]["target"], preds[0]["probability"])
+
+    if target_host in engine.graph.nx_graph:
+        engine.graph.nx_graph.nodes[target_host]["status"] = "COMPROMISED"
+
+    try:
+        write_mem_state(engine)
+    except Exception:
+        pass
+
+    return {
+        "status": "ingested_to_graph",
+        "laya_action": "dispatched",
+        "latency_ms": laya_lat,
+        "laya_source": laya_source,
+        "predictions": preds,
+    }
+
+
 class SOCHandler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes, ctype: str = "application/json"):
         self.send_response(code)
@@ -117,54 +195,8 @@ class SOCHandler(BaseHTTPRequestHandler):
             self._json(res)
         elif self.path == "/api/ingest_threat":
             # Bridge the Two Universes (D7): Inject terminal threats into the visual graph
-            event = {
-                "event_type": "NETWORK_CONNECTION",
-                "host": "TERMINAL_WATCHER",
-                "network": {"dest_ip": body.get("ip", "0.0.0.0"), "dest_port": 22},
-                "timestamp": body.get("timestamp", ""),
-                "description": body.get("details", "")
-            }
             try:
-                ENGINE.graph.ingest_normalized_event(event)
-                laya_v = body.get("laya_verdict", "CRITICAL")
-                laya_conf = float(body.get("laya_confidence", 0.95))
-                laya_path = body.get("laya_path", [])
-                laya_lat = float(body.get("laya_latency_ms", 12.0))
-                
-                ENGINE.last_alerts.append({
-                    "rule_id": "LAYA_TRIAGE",
-                    "title": f"Laya System-1: {body.get('type', 'ATTACK')} ({str(laya_v).upper()} {laya_conf*100:.1f}% in {laya_lat}ms)",
-                    "level": "CRITICAL" if laya_v == "malicious" else "HIGH",
-                    "host": "TERMINAL_WATCHER",
-                    "timestamp": event["timestamp"]
-                })
-
-                if laya_path:
-                    ENGINE.last_predictions = [
-                        {
-                            "target_name": hop,
-                            "is_critical": any(k in hop.lower() for k in ["dc", "crown", "cluster", "system", "lsass"]),
-                            "probability": round(max(0.95 - idx * 0.12, 0.45), 3),
-                            "attack_vector": f"Laya System-1 Forecast ({body.get('type', 'LATERAL_MOVE')})",
-                            "target": hop
-                        }
-                        for idx, hop in enumerate(laya_path)
-                    ]
-
-                target_host = "HOST:WKSTN-04"
-                if target_host in ENGINE.graph.nx_graph:
-                    ENGINE.graph.nx_graph.nodes[target_host]["status"] = "COMPROMISED"
-                for idx, pt in enumerate(["HOST:FILE-SRV", "HOST:DC01-PROD"]):
-                    if pt in ENGINE.graph.nx_graph:
-                        ENGINE.graph.mark_predicted_path(target_host, pt, round(max(0.95 - idx * 0.12, 0.45), 2))
-                if target_host in ENGINE.graph.nx_graph:
-                    ENGINE.graph.nx_graph.nodes[target_host]["status"] = "COMPROMISED"
-                try:
-                    write_mem_state(ENGINE)
-                except Exception:
-                    pass
-
-                self._json({"status": "ingested_to_graph", "laya_action": "dispatched", "latency_ms": laya_lat})
+                self._json(apply_ingested_threat(ENGINE, body))
             except Exception as e:
                 self._json({"error": str(e)}, code=500)
         else:
@@ -246,11 +278,12 @@ class SOCHandler(BaseHTTPRequestHandler):
             "graph": {"elements": graph.get("elements", []), "summary": graph.get("summary", {})},
             "predictions": mem.get("last_predictions", []) if (bridge_ok and mem.get("last_predictions")) else getattr(ENGINE, "last_predictions", []),
             "laya_telemetry": {
-                "system1_model": "Laya 421M Non-Autoregressive",
-                "median_latency_ms": 51.0,
+                "system1_model": (getattr(ENGINE, "last_laya_telemetry", None) or {}).get("system1_model", "Laya 421M Non-Autoregressive"),
+                "median_latency_ms": (getattr(ENGINE, "last_laya_telemetry", None) or {}).get("median_latency_ms", 51.0),
                 "auto_act_rate": 0.8317,
                 "attack_sensitivity": 0.9572,
-                "status": "ONLINE"
+                "source": (getattr(ENGINE, "last_laya_telemetry", None) or {}).get("source", "STANDBY"),
+                "status": "ONLINE",
             },
             "alerts": alerts,
             "threats": threats.get("threats", [])[:10],

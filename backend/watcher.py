@@ -1,4 +1,4 @@
-﻿import time
+import time
 import sqlite3
 import os
 import datetime
@@ -50,7 +50,7 @@ def report_threat(ip, threat_type, details):
     print(f"\n{RED}[!!!] CRITICAL THREAT DETECTED [!!!]{RESET}")
     print(f"{RED}Type: {threat_type} | Source IP: {ip}{RESET}")
     if triage_res:
-        print(f"{CYAN}[LAYA SYSTEM-1] Verdict: {triage_res.verdict.upper()} ({triage_res.confidence*100:.1f}%) | Latency: {triage_res.latency_ms}ms{RESET}")
+        print(f"{CYAN}[LAYA SYSTEM-1 ({triage_res.source})] Verdict: {triage_res.verdict.upper()} ({triage_res.confidence*100:.1f}%) | Latency: {triage_res.latency_ms}ms{RESET}")
         print(f"{CYAN}[LAYA SYSTEM-1] Forecast Path: {' -> '.join(triage_res.predicted_path)}{RESET}")
         print(f"{CYAN}[LAYA SYSTEM-1] Action: {triage_res.action} (Honeypot Deployed & Hermes Awakened){RESET}\n")
     else:
